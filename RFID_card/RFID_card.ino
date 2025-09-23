@@ -2,8 +2,8 @@
 #include <MFRC522.h>
 #include <Wire.h>              // Required for I2C communication
 #include <LiquidCrystal_I2C.h> // Required for LCD I2C
-#include <RTClib.h>            // Required for Real-Time Clock (RTC) module
-#include <SD.h>                // Required for SD card module
+// #include <RTClib.h>            // Required for Real-Time Clock (RTC) module
+// #include <SD.h>                // Required for SD card module
 
 // --- RFID MFRC522 pin definitions ---
 #define SS_PIN 10              // Configurable pin for MFRC522 Slave Select (SS)
@@ -27,14 +27,14 @@ LiquidCrystal_I2C lcd(0x27, 16, 2); // Set the LCD I2C address and dimensions (1
 
 // --- RTC Module ---
 // Choose the correct RTC object based on your module:
-RTC_DS3231 rtc; // For DS3231 module (recommended for accuracy) and what i actualy have
+// RTC_DS3231 rtc; // For DS3231 module (recommended for accuracy) and what i actualy have
 // RTC_DS1307 rtc; // For DS1307 module
 
 /* --- SD Card Module ---
  Define the Chip Select (CS) pin for your SD card module.
  This is typically D4 or D10, but check your specific module's documentation.
 */
-const int chipSelect = 4; // Digital pin connected to SD card CS
+// const int chipSelect = 4; // Digital pin connected to SD card CS
 
 // --- Student Data Structure ---
 // Defines a structure to hold student information.
@@ -63,7 +63,7 @@ Student students[] = {
 const int numStudents = sizeof(students) / sizeof(students[0]);
 
 // --- File Name for Attendance Logging on SD Card ---
-const char* attendanceLogFile = "ATTEND.CSV"; // Using .CSV for easier spreadsheet compatibility
+// const char* attendanceLogFile = "ATTEND.CSV"; // Using .CSV for easier spreadsheet compatibility
 
 void setup() {
   // --- Configure Pin Modes ---
@@ -89,7 +89,7 @@ void setup() {
 
   // --- Initialize RTC Module ---
   // Check if the RTC module is connected and functioning.
-  if (!rtc.begin()) {
+ /* if (!rtc.begin()) {
     Serial.println("Couldn't find RTC module!");
     lcd.clear();
     lcd.print("RTC Error!");
@@ -97,7 +97,7 @@ void setup() {
     lcd.print("Check Wiring.");
     while (1); // Halt the program if RTC is not found (critical component)
   }
-
+*/
   // OPTIONAL: Uncomment the line below *once* to set the RTC to the Arduino's compile time.
   // After the first successful upload and time set, COMMENT THIS LINE OUT AGAIN,
   // otherwise, the RTC will reset to compile time every time you upload the sketch.
@@ -105,15 +105,15 @@ void setup() {
   // rtc.adjust(DateTime(F(__DATE__), F(__TIME__))); /*this is the line */
 
   // If the RTC is not running, set it to the compile time (useful if battery is dead)
-  if (!rtc.isrunning()) {
-    Serial.println("RTC is NOT running, setting time!");
-    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-  }
+ // if (!rtc.isrunning()) {
+  //  Serial.println("RTC is NOT running, setting time!");
+  //  rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+ // }
 
   // --- Initialize SD Card Module ---
-  Serial.print("Initializing SD card...");
+ // Serial.print("Initializing SD card...");
   // Check if the SD card is present and can be initialized.
-  if (!SD.begin(chipSelect)) {
+  /*if (!SD.begin(chipSelect)) {
     Serial.println("SD card failed, or not present");
     lcd.clear();
     lcd.print("SD Card Error!");
@@ -134,7 +134,7 @@ void setup() {
       Serial.println("Error creating attendance log file!");
     }
   }
-
+*/
   // --- System Ready Message ---
   lcd.clear();
   lcd.print("WELCOME!");
@@ -156,13 +156,13 @@ void loop() {
   }
 
   // --- Get current date and time from RTC ---
-  DateTime now = rtc.now(); // Get the current date and time
-  char timeStr[20]; // Buffer to store the formatted timestamp string
-  // Format the timestamp: DD/MM/YYYY HH:MM:SS
-  sprintf(timeStr, "%02d/%02d/%04d %02d:%02d:%02d",
+ // DateTime now = rtc.now(); // Get the current date and time
+ // char timeStr[20]; // Buffer to store the formatted timestamp string
+ // // Format the timestamp: DD/MM/YYYY HH:MM:SS
+  /* sprintf(timeStr, "%02d/%02d/%04d %02d:%02d:%02d",
     now.day(), now.month(), now.year(),
     now.hour(), now.minute(), now.second());
-
+*/
   // --- Format and print the scanned Card UID to Serial Monitor ---
   Serial.print("Scanned Card UID: ");
   char currentUID_hex_str[12]; // Buffer to store UID in "XX XX XX XX" format
@@ -183,15 +183,15 @@ void loop() {
   }
 
   lcd.clear(); // Clear the LCD for new message
-  String logEntry; // String to build the attendance record for the SD card
+  // String logEntry; // String to build the attendance record for the SD card
 
   if (studentIndex != -1) {
     // --- Student Found: Grant Access and Log Check-In/Check-Out ---
     String studentName = students[studentIndex].name;
     Serial.print("Access Granted for: ");
     Serial.println(studentName);
-    Serial.print("Timestamp: ");
-    Serial.println(timeStr);
+   // Serial.print("Timestamp: ");
+//    Serial.println(timeStr);
 
     lcd.setCursor(0, 0);
     lcd.print("Welcome,");
@@ -202,14 +202,14 @@ void loop() {
     // For a more advanced system, you'd track the last state (IN/OUT)
     // For this example, we'll just log "IN" for recognized students.
     //And when i will advance or iterate the project i will check for in and out
-    logEntry = String(currentUID_hex_str) + "," + studentName + "," + String(timeStr) + ",IN";
-    playSuccessSoundAndLight(); // Trigger success feedback
+   // logEntry = String(currentUID_hex_str) + "," + studentName + "," + String(timeStr) + ",IN";
+   // playSuccessSoundAndLight(); // Trigger success feedback
 
   } else {
     // --- Unknown Card: Deny Access ---
     Serial.println("Access Denied: Unknown Card!");
-    Serial.print("Timestamp: ");
-    Serial.println(timeStr);
+   // Serial.print("Timestamp: ");
+   // Serial.println(timeStr);
 
     lcd.setCursor(0, 0);
     lcd.print("Access Denied!");
@@ -217,12 +217,12 @@ void loop() {
     lcd.print("Unknown Card.");
 
     // Log entry for unknown cards
-    logEntry = String(currentUID_hex_str) + ",UNKNOWN," + String(timeStr) + ",DENIED";
-    playDeniedSoundAndLight(); // Trigger denial feedback
+   // logEntry = String(currentUID_hex_str) + ",UNKNOWN," + String(timeStr) + ",DENIED";
+   // playDeniedSoundAndLight(); // Trigger denial feedback
   }
 
   // --- Log Attendance to SD Card ---
-  File dataFile = SD.open(attendanceLogFile, FILE_WRITE); // Open the file in write mode (appends to end)
+ /* File dataFile = SD.open(attendanceLogFile, FILE_WRITE); // Open the file in write mode (appends to end)
   if (dataFile) {
     dataFile.println(logEntry); // Write the attendance record line
     dataFile.close();           // Close the file to save data
@@ -236,7 +236,7 @@ void loop() {
     lcd.print("Check SD Card.");
     delay(1000); // Display error for a moment
   }
-
+*/
   // --- Reset RFID Reader for Next Scan ---
   mfrc522.PICC_HaltA();       // Halt PICC (effectively deactivates the card)
   mfrc522.PCD_StopCrypto1();  // Stop encryption on PCD (important for next scan)
