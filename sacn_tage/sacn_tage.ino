@@ -32,10 +32,16 @@ void setup() {
   Serial.begin(9600);
   SPI.begin();
   rfid.PCD_Init();
+<<<<<<< HEAD
   Serial.println("=====Student Attendance=====");
   Serial.println("Place your RFID tag on the reader...");
   pinMode(ledPin, OUTPUT);
   pinMode(WATER_S, INPUT);
+=======
+  Serial.println("Place your RFID tag on the reader...");
+  pinMode(ledPin, OUTPUT);
+
+>>>>>>> d4c9dd1ed73498a63a91883575e60a9fde96f03a
   lcd.init();
   lcd.backlight();
 
@@ -96,7 +102,11 @@ void loop() {
   lcd.setCursor(0, 1);
   lcd.print("Scan your card");
 
+<<<<<<< HEAD
   Serial.print("UID tag:||");
+=======
+  Serial.print("UID tag:");
+>>>>>>> d4c9dd1ed73498a63a91883575e60a9fde96f03a
   for (byte i = 0; i < rfid.uid.size; i++) {
     Serial.print(" ");
     Serial.print(rfid.uid.uidByte[i], HEX);

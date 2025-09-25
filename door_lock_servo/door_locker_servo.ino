@@ -19,7 +19,11 @@ MFRC522 rfid(SS_PIN, RST_PIN);
 
 
 void setup() {
+<<<<<<< HEAD
   Serial.begin(115200);
+=======
+  Serial.begin(9600);
+>>>>>>> d4c9dd1ed73498a63a91883575e60a9fde96f03a
   servo.write(70);
   lcd.init();
   lcd.backlight();
