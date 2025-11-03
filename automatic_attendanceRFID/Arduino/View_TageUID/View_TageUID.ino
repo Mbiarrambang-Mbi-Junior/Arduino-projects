@@ -1,7 +1,7 @@
 #include <SPI.h>
 #include <MFRC522.h>
 
-// RFID MFRC522 pin definitions
+// RFID MFRC522 pin definitions for Arduino Uno
 #define SS_PIN 10
 #define RST_PIN 9
 
@@ -11,7 +11,6 @@ void setup() {
   Serial.begin(9600);
   SPI.begin();
   mfrc522.PCD_Init();
-  digitalWrite(yellow, HIGH);
 
   Serial.println("RFID Scanner - Waiting for card...");
 }
@@ -28,29 +27,22 @@ void loop() {
   }
 
   Serial.print("Card UID:");
-
+  // Loop through the 4 bytes of the UID
   for (byte i = 0; i < mfrc522.uid.size; i++) {
-    Serial.print(mfrc522.uid.uidByte[i] < 0x10 ? " 0" : " "); // Format for serial
+    // Add a leading space and a '0' if the hex value is single digit (e.g., " 0F" instead of " F")
+    Serial.print(mfrc522.uid.uidByte[i] < 0x10 ? " 0" : " ");
     Serial.print(mfrc522.uid.uidByte[i], HEX); // Print each byte of the UID in hexadecimal
-
-    // Format for LCD
-    if (mfrc522.uid.uidByte[i] < 0x10) {
-      uid_display_buffer[buffer_idx++] = '0';
-    }
-    sprintf(&uid_display_buffer[buffer_idx], "%X", mfrc522.uid.uidByte[i]); // Print hex
-    buffer_idx += (mfrc522.uid.uidByte[i] < 0x10 ? 1 : 2); // Advance index by 1 or 2 characters
-    if (i < mfrc522.uid.size - 1) {
-      uid_display_buffer[buffer_idx++] = ' '; // Add space between bytes
-    }
   }
-  uid_display_buffer[buffer_idx] = '\0'; // Null-terminate the string
 
   Serial.println();
   Serial.println("Card Scanned!");
 
-  // Halt PICC
+  // Halt PICC (stops the card from being read repeatedly)
   mfrc522.PICC_HaltA();
+  
+  // Stop encryption on PCD
+  mfrc522.PCD_StopCrypto1();
 
-  delay(2000); // Display UID for 2 seconds
-  Serial.print("Ready to scan!"); // Reset serial message
+  delay(2000); // Wait 2 seconds
+  Serial.println("Ready to scan!"); 
 }
