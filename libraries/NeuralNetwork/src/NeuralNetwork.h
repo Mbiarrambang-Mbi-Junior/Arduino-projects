@@ -43,7 +43,7 @@
 #ifndef NeuralNetwork_h
 #define NeuralNetwork_h
 
-#define __NN_VERSION__ "VERSION: 4.1.0-Alpha"\n
+#define __NN_VERSION__ "VERSION: 4.1.9-Alpha"\n
 
 
 #if defined(ARDUINO)
@@ -200,6 +200,11 @@ template<size_t   N> struct is_not_a_cstring<      char[N]> { static const bool 
     #endif
 #endif
 
+
+#define DEFAULT_LEARNING_RATE_OF_WEIGHTS 0.33
+#define DEFAULT_LEARNING_RATE_OF_BIASES 0.066
+
+
 #define ATOL atol
 #define LLONG long
 #define DFLOAT float
@@ -211,7 +216,7 @@ template<size_t   N> struct is_not_a_cstring<      char[N]> { static const bool 
         #undef MSG1
         #undef IS_CONST
         #undef MEM_SUBSTRATE_MSG
-        #if defined(__AVR__)
+        #if defined(__AVR__) // NOTE: ##38
             #define MSG1 \n- " [1] 0B10000000 [Δ] [𝗥𝗲𝗺𝗶𝗻𝗱𝗲𝗿] Backpropagation is not Allowed with (USE_PROGMEM)."
             #undef TYPE_MEMMORY_READ_IDFLOAT
             #define TYPE_MEMMORY_READ_IDFLOAT(x) pgm_read_float(&x)
@@ -237,8 +242,8 @@ template<size_t   N> struct is_not_a_cstring<      char[N]> { static const bool 
 
     #if ((_1_OPTIMIZE bitor 0B11011111) == 0B11111111)
         #undef MSG22
-        #define MSG22 \n- " [1] 0B00100000 [Δ] [𝗥𝗲𝗺𝗶𝗻𝗱𝗲𝗿] Using (DISABLE_SIMD_SUPPORT), allows any type to be used as input-data."
-        #define DISABLE_SIMD_SUPPORT
+        #define MSG22 \n- " [1] 0B00100000 [Δ] [𝗥𝗲𝗺𝗶𝗻𝗱𝗲𝗿] Using (DISABLE_DSP_ACCELERATION), allows any type to be used as input-data."
+        #define DISABLE_DSP_ACCELERATION
     #endif
     
     #if ((_1_OPTIMIZE bitor 0B11101111) == 0B11111111) && !defined(FORCED_REDUCE_RAM_WEIGHTS_LVL2) && !defined(IGNORE_OB0001_OPT)
@@ -279,19 +284,21 @@ template<size_t   N> struct is_not_a_cstring<      char[N]> { static const bool 
         #undef LLONG 
         #undef DFLOAT_LEN 
         #undef DFLOAT 
-        #undef TYPE_MEMMORY_READ_IDFLOAT 
         #define USE_64_BIT_DOUBLE
         #define ATOL atoll
         #define LLONG long long
         #define DFLOAT_LEN 15
         #define DFLOAT double
-        #define TYPE_MEMMORY_READ_IDFLOAT(x) pgm_read_double(&x)
 
-        double pgm_read_double(const double* address) {
-            double result;
-            memcpy_P(&result, address, sizeof(double));
-            return result;
-        }
+        #if defined(AVR_PROGMEM_LOGIC) // NOTE: that we are safe to undef below here because of ##38
+            #undef TYPE_MEMMORY_READ_IDFLOAT
+            #define TYPE_MEMMORY_READ_IDFLOAT(x) pgm_read_double(&x)
+            double pgm_read_double(const double* address) {
+                double result;
+                memcpy_P(&result, address, sizeof(double));
+                return result;
+            }
+        #endif
 
         #undef MSG7
         #define MSG7 \n- " [1] 0B00000001 [Ι] [𝗥𝗲𝗺𝗶𝗻𝗱𝗲𝗿] Using 64bit\8byte double-precision (USE_64_BIT_DOUBLE)."
@@ -387,11 +394,17 @@ template<size_t   N> struct is_not_a_cstring<      char[N]> { static const bool 
         #define NO_BACKPROP
         #define USE_INT_QUANTIZATION
 
-        IDFLOAT TYPE_MEMMORY_READ_IDFLOAT_NAME(const IDFLOAT* address) {
-            IDFLOAT result;
-            memcpy_P(&result, address, sizeof(IDFLOAT));
-            return result;
-        }
+        #if defined(AVR_PROGMEM_LOGIC)
+            IDFLOAT TYPE_MEMMORY_READ_IDFLOAT_NAME(const IDFLOAT* address) {
+                IDFLOAT result;
+                memcpy_P(&result, address, sizeof(IDFLOAT));
+                return result;
+            }
+        #else // we redefine macro-logic back to the default
+            #undef TYPE_MEMMORY_READ_IDFLOAT_NAME
+            #undef TYPE_MEMMORY_READ_IDFLOAT
+            #define TYPE_MEMMORY_READ_IDFLOAT(x) (x)
+        #endif
 
         // FLOAT RANGE = (100.0) - (-100.0) | MAX - MIN
         // INT   RANGE = (32767) - (-32768) | MAX - MIN
@@ -409,6 +422,11 @@ template<size_t   N> struct is_not_a_cstring<      char[N]> { static const bool 
         #define MULTIPLY_BY_INT_IF_QUANTIZATION * ((DFLOAT)Q_FLOAT_RANGE/Q_INT_RANGE)
 
         #define CAST_TO_LLONG_IF_NOT_INT_QUANTIZATION(value) value
+
+        #undef DEFAULT_LEARNING_RATE_OF_WEIGHTS
+        #undef DEFAULT_LEARNING_RATE_OF_BIASES
+        #define DEFAULT_LEARNING_RATE_OF_WEIGHTS ((IDFLOAT)((Q_INT_RANGE * 0.33)/Q_FLOAT_RANGE))
+        #define DEFAULT_LEARNING_RATE_OF_BIASES  ((IDFLOAT)((Q_INT_RANGE * 0.11)/Q_FLOAT_RANGE))
     #endif
 
     #if ((_2_OPTIMIZE bitor 0B11111101) == 0B11111111)
@@ -518,10 +536,11 @@ template<size_t   N> struct is_not_a_cstring<      char[N]> { static const bool 
 
 
 // Keyword-based NN optimizations
-//
-#if !defined(NO_BIAS) && !defined(MULTIPLE_BIASES_PER_LAYER)
+//// Check if the NN has only a SINGLE_BIAS_PER_LAYER
+#if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
     #undef OPTIONAL_SINGLE_BIAS
     #define OPTIONAL_SINGLE_BIAS(x) , x
+    #define SINGLE_BIAS_PER_LAYER
 #endif
 
 /// Messages
@@ -547,7 +566,7 @@ template<size_t   N> struct is_not_a_cstring<      char[N]> { static const bool 
 #define SIZEOF_FROM(x, y, z) x
 
 // (Bit-filed) Struct used when MULTIPLE_NN_TYPE_ARCHITECTURES to store the extra Layer's properties
-struct LayerProps {
+struct LayerProps { // NOTE: ##34
     #if defined(ACTIVATION__PER_LAYER)
         byte fx : 4;  // Activation Function
     #else
@@ -729,20 +748,16 @@ struct LayerProps {
     #endif
 #endif
 
-// TODO: Once I'll add support for FRAM I need to change those errors for RAM_EFFICIENT_HILL_CLIMB to inform the user to use RAM_EFFICIENT_HILL_CLIMB_WITHOUT_NEW instead! 
-// Because there is no initialization nor destrcuction proccess of dynamic parameters during FRAM usage
 #if defined(RAM_EFFICIENT_HILL_CLIMB) or defined(RAM_EFFICIENT_HILL_CLIMB_WITHOUT_NEW)
-    #if defined(USE_INTERNAL_EEPROM)
-        #error "💥 You can't USE_INTERNAL_EEPROM with HillClimb yet."
-    #endif
-    #if defined(USE_EXTERNAL_FRAM)
-        #error "💥 You can't USE_EXTERNAL_FRAM with HillClimb yet."
-    #endif
-    #if defined(USE_INT_QUANTIZATION)
+    #if (defined(USE_EXTERNAL_FRAM) or defined(USE_INTERNAL_EEPROM)) // NOTE: we support RAM_EFFICIENT_HILL_CLIMB_WITHOUT_NEW with FRAM and EEPROM (...WITHOUT_NEW Because there is no initialization nor destrcuction proccess of dynamic parameters during EEPROM\FRAM usage, yet...)
+        #if defined(RAM_EFFICIENT_HILL_CLIMB) // TODO: RAM_EFFICIENT_HILL_CLIMB with new\constructor would be cool (use save() logic)
+            #error "💥 Use RAM_EFFICIENT_HILL_CLIMB_WITHOUT_NEW instead of RAM_EFFICIENT_HILL_CLIMB."
+        #endif
+    #elif defined(USE_INT_QUANTIZATION)
         #error "💥 You can't USE_INT_QUANTIZATION with HillClimb yet."
     #endif
     #if defined(USE_PROGMEM)
-        #error "💥 You can't USE_PROGMEM with HillClimb"
+        #error "💥 You can't USE_PROGMEM with HillClimb."
     #endif
 #endif
 
@@ -751,7 +766,7 @@ struct LayerProps {
         #undef MSG3
         #define MSG3 \n- " [1] 0B000X0000 [Χ] [𝗥𝗲𝗺𝗶𝗻𝗱𝗲𝗿] There is no need for (REDUCE_RAM_WEIGHTS_LVLX)"
     #endif
-    #if defined(ACTIVATION__PER_LAYER)
+    #if defined(ACTIVATION__PER_LAYER) // #34
         #define SIZEOF_FX sizeof(LayerType)
     #endif
 #endif
@@ -767,36 +782,36 @@ struct LayerProps {
     #endif
 #endif
 
-// Disable SIMD parallel processing if double-precision or int-quntization is enabled
-#if (!defined(DISABLE_SIMD_SUPPORT) && (defined(CONFIG_IDF_TARGET_ESP32S3) || defined(USE_ESP_SIMD)))
+// Disable DSP parallel processing if double-precision or int-quntization is enabled
+#if (!defined(DISABLE_DSP_ACCELERATION) && (defined(CONFIG_IDF_TARGET_ESP32S3) || defined(USE_ESP_DSP)))
     #undef MSG22
     #if defined(USE_64_BIT_DOUBLE)
-        #define MSG22 \n- " [1] 0B00100000 [Δ] [𝗥𝗲𝗺𝗶𝗻𝗱𝗲𝗿] SIMD disabled, there is no support when double precision."
+        #define MSG22 \n- " [1] 0B00100000 [Δ] [𝗥𝗲𝗺𝗶𝗻𝗱𝗲𝗿] DSP-acceleration disabled, there is no support when double precision."
     #elif defined(USE_INT_QUANTIZATION)
-        #define MSG22 \n- " [1] 0B00100000 [Δ] [𝗥𝗲𝗺𝗶𝗻𝗱𝗲𝗿] SIMD disabled, there is no support for USE_INT_QUANTIZATION."
+        #define MSG22 \n- " [1] 0B00100000 [Δ] [𝗥𝗲𝗺𝗶𝗻𝗱𝗲𝗿] DSP-acceleration disabled, there is no support for USE_INT_QUANTIZATION."
     #else
-        #define ESP_SUPPORTS_SIMD
+        #define ESP_SUPPORTS_DSP
         #undef ACCUMULATED_DOT_PRODUCT_OF
         // TODO: tmp_dest will be removed once I implement the custom-assembly-dotprod function of esp32 and stuff
         #if defined(REDUCE_RAM_WEIGHTS_LVL2)
             // We keep me->i_j+= len; for Backprop but //TODO: might remove it when (NO_BACKPROP and (NO USE_RNN_LAYERS_ONLY))
 
-            /* 💥 𝗡𝗢𝗧𝗘: Try `#define _1_OPTIMIZE 0B00100000` to `DISABLE_SIMD_SUPPORT` OR simply use `float` values as inputs if you're having type-errors */ #define ACCUMULATED_DOT_PRODUCT_OF(src1, src2, dest, len) do { dsps_dotprod_f32(src1, src2, &me->tmp_dest, len); *dest+=me->tmp_dest; me->i_j+=len; } while(0)
+            /* 💥 𝗡𝗢𝗧𝗘: Try `#define _1_OPTIMIZE 0B00100000` to `DISABLE_DSP_ACCELERATION` OR simply use `float` values as inputs if you're having type-errors */ #define ACCUMULATED_DOT_PRODUCT_OF(src1, src2, dest, len) do { dsps_dotprod_f32(src1, src2, &me->tmp_dest, len); *dest+=me->tmp_dest; me->i_j+=len; } while(0)
         #else
-            /* 💥 𝗡𝗢𝗧𝗘: Try `#define _1_OPTIMIZE 0B00100000` to `DISABLE_SIMD_SUPPORT` OR simply use `float` values as inputs if you're having type-errors */ #define ACCUMULATED_DOT_PRODUCT_OF(src1, src2, dest, len) do { dsps_dotprod_f32(src1, src2, &me->tmp_dest, len); *dest+=me->tmp_dest; } while(0)
+            /* 💥 𝗡𝗢𝗧𝗘: Try `#define _1_OPTIMIZE 0B00100000` to `DISABLE_DSP_ACCELERATION` OR simply use `float` values as inputs if you're having type-errors */ #define ACCUMULATED_DOT_PRODUCT_OF(src1, src2, dest, len) do { dsps_dotprod_f32(src1, src2, &me->tmp_dest, len); *dest+=me->tmp_dest; } while(0)
         #endif
-        #define MSG22 \n- " [1] 0B00X00000 [I] [𝗥𝗲𝗺𝗶𝗻𝗱𝗲𝗿] You are using SIMD acceleration."
+        #define MSG22 \n- " [1] 0B00X00000 [I] [𝗥𝗲𝗺𝗶𝗻𝗱𝗲𝗿] You are using DSP acceleration."
         #if defined(REDUCED_SKETCH_SIZE_DOT_PROD)
             #undef MSG4
-            #define MSG4 \n- " [1] 0B0000X000 [Χ] [𝗥𝗲𝗺𝗶𝗻𝗱𝗲𝗿] (REDUCED_SKETCH_SIZE_DOT_PROD) not used since (ESP_SUPPORTS_SIMD)."
+            #define MSG4 \n- " [1] 0B0000X000 [Χ] [𝗥𝗲𝗺𝗶𝗻𝗱𝗲𝗿] (REDUCED_SKETCH_SIZE_DOT_PROD) not used since (ESP_SUPPORTS_DSP)."
         #endif
         #include "esp_dsp.h"
     #endif
 #endif
 
 // REMINDER DO NOT UNCOMMENT THIS!!!!!! BECAUSE IT WILL RESULT ON ESP32-S3 NOT COMPILING WITH USE_PROGMEM or USE_INTERNAL_EEPROM AT ALL | i keep it here as a future reminder
-// #if defined(ESP_SUPPORTS_SIMD) and (defined(USE_PROGMEM) or defined(USE_INTERNAL_EEPROM))
-//     #error "There's no support for SIMD use with USE_PROGMEM or USE_INTERNAL_EEPROM yet."
+// #if defined(ESP_SUPPORTS_DSP) and (defined(USE_PROGMEM) or defined(USE_INTERNAL_EEPROM))
+//     #error "There's no support for DSP-acceleration use with USE_PROGMEM or USE_INTERNAL_EEPROM yet."
 // #endif
 
 #define ACT1  0
@@ -1256,6 +1271,8 @@ struct LayerProps {
 // Check if there's NO_TRAINING_METHOD
 #if defined(NO_BACKPROP) && !defined(AS_TYPE_OF_HILL_CLIMB)
     #define NO_TRAINING_METHOD
+#else
+    #define NN_WITH_TRAINING_METHOD
 #endif
 
 
@@ -1454,17 +1471,22 @@ private:
         //      #0 Constructor                                                         .
         //      #1 Constructor With default/("probably") preptained, weights and biases.
         Layer() {};
-        #if !defined(USE_PROGMEM)
-            // ^^^^^ I keep this USE_PROGMEM instead of NO_BACKPROP because that way if I add a NeuralNetwork::feedforward_PROGMEM, with -fpermisive someone will be able to use both RAM-NN and PROGMEM-NN at the same time
-            Layer(const unsigned int NumberOfInputs, const unsigned int NumberOfOutputs OPTIONAL_LAYER_TYPE_ARCHITECTURE(byte layerArchitecture = 0), NeuralNetwork * const NN = NULL ); // #0  | defined(NO_BIAS) is there 2024-03-02
-        #endif
 
-        #if defined(NO_BIAS)
-            Layer(const unsigned int NumberOfInputs, const unsigned int NumberOfOutputs, IS_CONST IDFLOAT *default_Weights OPTIONAL_LAYER_TYPE_ARCHITECTURE(byte layerArchitecture = 0), NeuralNetwork * const NN = NULL ); // #1  #(used if NOT #REDUCE_RAM_WEIGHTS_LVL2 defined)
-            Layer(const unsigned int NumberOfInputs, const unsigned int NumberOfOutputs, bool has_no_bias OPTIONAL_LAYER_TYPE_ARCHITECTURE(byte layerArchitecture = 0), NeuralNetwork * const NN = NULL ); // has_no_bias is something the compiler 99% will optimize\remove | This is just a trick for distinguishing the constructors from the one who auto-generates the weights
+        #if defined(USE_INTERNAL_EEPROM) or defined(USE_EXTERNAL_FRAM)
+            Layer(const unsigned int NumberOfInputs, const unsigned int NumberOfOutputs OPTIONAL_LAYER_TYPE_ARCHITECTURE(byte layerArchitecture = 0), NeuralNetwork * const NN = NULL ); // #0  | defined(NO_BIAS) is there 2024-03-02
         #else
-            Layer(const unsigned int NumberOfInputs, const unsigned int NumberOfOutputs, IS_CONST IDFLOAT *default_Bias OPTIONAL_LAYER_TYPE_ARCHITECTURE(byte layerArchitecture = 0), NeuralNetwork * const NN = NULL ); //                                       #(used if     #REDUCE_RAM_WEIGHTS_LVL2 defined)
-            Layer(const unsigned int NumberOfInputs, const unsigned int NumberOfOutputs, IS_CONST IDFLOAT *default_Weights, IS_CONST IDFLOAT *default_Bias OPTIONAL_LAYER_TYPE_ARCHITECTURE(byte layerArchitecture = 0), NeuralNetwork * const NN = NULL ); // #1  #(used if NOT #REDUCE_RAM_WEIGHTS_LVL2 defined)
+            #if !defined(USE_PROGMEM)
+                // ^^^^^ I keep this USE_PROGMEM instead of NO_BACKPROP because that way if I add a NeuralNetwork::feedforward_PROGMEM, with -fpermisive someone will be able to use both RAM-NN and PROGMEM-NN at the same time
+                Layer(const unsigned int NumberOfInputs, const unsigned int NumberOfOutputs OPTIONAL_LAYER_TYPE_ARCHITECTURE(byte layerArchitecture = 0), NeuralNetwork * const NN = NULL ); // #0  | defined(NO_BIAS) is there 2024-03-02
+            #endif
+
+            #if defined(NO_BIAS)
+                Layer(const unsigned int NumberOfInputs, const unsigned int NumberOfOutputs, IS_CONST IDFLOAT *default_Weights OPTIONAL_LAYER_TYPE_ARCHITECTURE(byte layerArchitecture = 0), NeuralNetwork * const NN = NULL ); // #1  #(used if NOT #REDUCE_RAM_WEIGHTS_LVL2 defined)
+                Layer(const unsigned int NumberOfInputs, const unsigned int NumberOfOutputs, bool has_no_bias OPTIONAL_LAYER_TYPE_ARCHITECTURE(byte layerArchitecture = 0), NeuralNetwork * const NN = NULL ); // has_no_bias is something the compiler 99% will optimize\remove | This is just a trick for distinguishing the constructors from the one who auto-generates the weights
+            #else
+                Layer(const unsigned int NumberOfInputs, const unsigned int NumberOfOutputs, IS_CONST IDFLOAT *default_Bias OPTIONAL_LAYER_TYPE_ARCHITECTURE(byte layerArchitecture = 0), NeuralNetwork * const NN = NULL ); //                                       #(used if     #REDUCE_RAM_WEIGHTS_LVL2 defined)
+                Layer(const unsigned int NumberOfInputs, const unsigned int NumberOfOutputs, IS_CONST IDFLOAT *default_Weights, IS_CONST IDFLOAT *default_Bias OPTIONAL_LAYER_TYPE_ARCHITECTURE(byte layerArchitecture = 0), NeuralNetwork * const NN = NULL ); // #1  #(used if NOT #REDUCE_RAM_WEIGHTS_LVL2 defined)
+            #endif
         #endif
 
 
@@ -1577,13 +1599,13 @@ private:
             #endif
         #endif
         #if defined(USE_GRU_LAYERS_ONLY)
-            void GRU_Only_print();
+            void GRU_Only_print (OPTIONAL_TIME__TYPE_MEMMORY_INDEX(unsigned int _AtlayerIndex));
         #endif
         #if defined(USE_LSTM_LAYERS_ONLY)
-            void LSTM_Only_print();
+            void LSTM_Only_print(OPTIONAL_TIME__TYPE_MEMMORY_INDEX(unsigned int _AtlayerIndex));
         #endif
         #if defined(USE_RNN_LAYERS_ONLY)
-            void RNN_Only_print(OPTIONAL_TIME__TYPE_MEMMORY_INDEX(unsigned int _AtlayerIndex));
+            void RNN_Only_print (OPTIONAL_TIME__TYPE_MEMMORY_INDEX(unsigned int _AtlayerIndex));
         #endif
         void print(OPTIONAL_TIME__TYPE_MEMMORY_INDEX(unsigned int _AtlayerIndex));
     };  
@@ -1599,7 +1621,7 @@ public:
         void resetStates();
     #endif
 
-    #if defined(ESP_SUPPORTS_SIMD)
+    #if defined(ESP_SUPPORTS_DSP)
         DFLOAT tmp_dest; // TODO: tmp_dest will be removed once I implement the custom-assembly-dotprod function of esp32 and stuff
     #endif
 
@@ -1662,9 +1684,9 @@ public:
 
     // unsigned float doesn't exist..? lol // #11
     #if !defined (NO_BACKPROP) || defined(RAM_EFFICIENT_HILL_CLIMB) || defined(RAM_EFFICIENT_HILL_CLIMB_WITHOUT_NEW)
-        DFLOAT LearningRateOfWeights = 0.33 ; // Learning Rate of Weights.
+        IDFLOAT LearningRateOfWeights = DEFAULT_LEARNING_RATE_OF_WEIGHTS; // Learning Rate of Weights.
         #if !defined(NO_BIAS)
-            DFLOAT LearningRateOfBiases  = 0.066; // Learning Rate of Biases .
+            IDFLOAT LearningRateOfBiases = DEFAULT_LEARNING_RATE_OF_BIASES; // Learning Rate of Biases .
         #endif
     #endif
     
@@ -1698,7 +1720,9 @@ public:
         NeuralNetwork(const unsigned int *layer_, const unsigned int &NumberOflayers OPTIONAL_TIME(const byte _threshold, const byte _atIndex), LayerType *_PropsPerLayer = NULL);                                              // #0
         NeuralNetwork(const unsigned int *layer_, const unsigned int &NumberOflayers OPTIONAL_TIME(const byte _threshold, const byte _atIndex), const DFLOAT LRw OPTIONAL_BIAS(const DFLOAT LRb), LayerType *_PropsPerLayer = NULL);          // #0
     #endif
-    NeuralNetwork(const unsigned int *layer_, IS_CONST IDFLOAT *default_Weights OPTIONAL_BIAS(IS_CONST IDFLOAT *default_Bias), const unsigned int &NumberOflayers OPTIONAL_TIME(const byte _threshold, const byte _atIndex), LayerType *_PropsPerLayer = NULL); // #1
+    #if !defined(USE_INTERNAL_EEPROM) and !defined(USE_EXTERNAL_FRAM)
+        NeuralNetwork(const unsigned int *layer_, IS_CONST IDFLOAT *default_Weights OPTIONAL_BIAS(IS_CONST IDFLOAT *default_Bias), const unsigned int &NumberOflayers OPTIONAL_TIME(const byte _threshold, const byte _atIndex), LayerType *_PropsPerLayer = NULL); // #1
+    #endif
     
     #if defined(SUPPORTS_INDIVIDUAL_FEEDFORWARD)
         void  reset_Individual_Input_Counter();
@@ -1747,10 +1771,10 @@ public:
         template <typename T_File, typename = typename nn_enable_if<is_not_a_cstring<T_File>::value>::type> bool load    (T_File&  file);
     #endif
 
-    #if defined(INCLUDES_EEPROM_H) and !defined(USE_INTERNAL_EEPROM)
+    #if defined(INCLUDES_EEPROM_H)
         template< typename T > void put_type_memmory_value(unsigned int &addr, T val);
         unsigned int save(unsigned int atAddress); // EEPROM , FRAM
-    #elif defined(INCLUDES_FRAM_H) and !defined(USE_EXTERNAL_FRAM)
+    #elif defined(INCLUDES_FRAM_H)
         template< typename T > void put_type_memmory_value(FRAM &fram, unsigned int &addr, T val);
         unsigned int save(FRAM &fram, unsigned int atAddress); // FRAM
     #endif
@@ -1833,12 +1857,10 @@ public:
                     #endif
 
                     // #if !defined(USE_PROGMEM)
-                    #if !defined(NO_BIAS)
-                        #if defined(MULTIPLE_BIASES_PER_LAYER)
-                            delete[] layers[i].bias;
-                        #else
-                            delete layers[i].bias;
-                        #endif
+                    #if defined(MULTIPLE_BIASES_PER_LAYER)
+                        delete[] layers[i].bias;
+                    #elif defined(SINGLE_BIAS_PER_LAYER)
+                        delete layers[i].bias;
                     #endif
                     // #endif
 
@@ -1955,72 +1977,74 @@ public:
     NeuralNetwork::~NeuralNetwork() { pdestract(); } 
 
 
-
-    NeuralNetwork::NeuralNetwork(const unsigned int *layer_, IS_CONST IDFLOAT *default_Weights OPTIONAL_BIAS(IS_CONST IDFLOAT *default_Bias), const unsigned int &NumberOflayers OPTIONAL_TIME(const byte _threshold, const byte _atIndex), LayerType *_PropsPerLayer)
-    {
-        #if defined(SUPPORTS_SD_FUNCTIONALITY) || defined(SUPPORTS_FS_FUNCTIONALITY) || !defined(NO_BACKPROP) || defined(RAM_EFFICIENT_HILL_CLIMB) // #8
-            isAllocdWithNew = false;
-        #endif
-        #if defined(SINGLE_TIMESTEP_THRESHOLD)
-            threshold = _threshold;
-            atIndex   = _atIndex;
-        #endif
-        numberOflayers = NumberOflayers - 1;
-
-        layers = new Layer[numberOflayers]; // there has to be a faster way by alocating memory for example...
-        #if defined(ACTIVATION__PER_LAYER) or defined(MULTIPLE_NN_TYPE_ARCHITECTURES)
-            PropsPerLayer = _PropsPerLayer;
-        #endif  
-        
-        #if defined(REDUCE_RAM_STATIC_REFERENCE)
-            me = this;
-        #endif
-
-        #if defined(REDUCE_RAM_WEIGHTS_LVL2)
-            weights = default_Weights;
-        #else
-            unsigned int weightsFromPoint = 0;
-        #endif
-
-        // TODO: it might be a great idea to add an optimization removing biasesFromPoint and using plain i * ... computations for sketch-size reduction via a macro like `REDUCE_SKETCH_SIZE_AT_CONSTRUCTOR`
-        #if defined(MULTIPLE_BIASES_PER_LAYER) // TODO: REDUCE_RAM_BIASES "common reference" | 2024-03-12 04:01:04 PM todo γιατι οπως μου ειχε πει "ενα ροζ συννεφακι": "κανε ενα-ενα τα πραγματα, οχι ολα μαζι..."
-            unsigned int biasesFromPoint = 0;
-        #endif
-
-        for (unsigned int i = 0; i < numberOflayers; i++)
+    #if !defined(USE_INTERNAL_EEPROM) and !defined(USE_EXTERNAL_FRAM)
+        NeuralNetwork::NeuralNetwork(const unsigned int *layer_, IS_CONST IDFLOAT *default_Weights OPTIONAL_BIAS(IS_CONST IDFLOAT *default_Bias), const unsigned int &NumberOflayers OPTIONAL_TIME(const byte _threshold, const byte _atIndex), LayerType *_PropsPerLayer)
         {
-            #if defined(REDUCE_RAM_WEIGHTS_LVL2) // #1.1
-                #if defined(NO_BIAS)
-                    layers[i] = Layer(layer_[i], layer_[i + 1], HAS_NO_BIAS OPTIONAL_LAYER_TYPE_ARCHITECTURE(PropsPerLayer[i].arch), this);
-                #elif defined(MULTIPLE_BIASES_PER_LAYER) // TODO: REDUCE_RAM_BIASES "common reference"
-                    layers[i] = Layer(layer_[i], layer_[i + 1], &default_Bias[biasesFromPoint] OPTIONAL_LAYER_TYPE_ARCHITECTURE(PropsPerLayer[i].arch),this);
-                #else
-                    layers[i] = Layer(layer_[i], layer_[i + 1], &default_Bias[i] OPTIONAL_LAYER_TYPE_ARCHITECTURE(PropsPerLayer[i].arch),this);
-                #endif
-            #else
-                #if defined(NO_BIAS)
-                    layers[i] = Layer(layer_[i], layer_[i + 1], &default_Weights[weightsFromPoint] OPTIONAL_LAYER_TYPE_ARCHITECTURE(PropsPerLayer[i].arch), this);
-                #elif defined(MULTIPLE_BIASES_PER_LAYER) // TODO: REDUCE_RAM_BIASES "common reference"
-                    layers[i] = Layer(layer_[i], layer_[i + 1], &default_Weights[weightsFromPoint], &default_Bias[biasesFromPoint] OPTIONAL_LAYER_TYPE_ARCHITECTURE(PropsPerLayer[i].arch),this);
-                #else
-                    layers[i] = Layer(layer_[i], layer_[i + 1], &default_Weights[weightsFromPoint], &default_Bias[i] OPTIONAL_LAYER_TYPE_ARCHITECTURE(PropsPerLayer[i].arch),this);
-                #endif
-
-                weightsFromPoint += NUMBER_FROM(layer_[i], layer_[i + 1], PropsPerLayer[i].arch); 
+            #if defined(SUPPORTS_SD_FUNCTIONALITY) || defined(SUPPORTS_FS_FUNCTIONALITY) || !defined(NO_BACKPROP) || defined(RAM_EFFICIENT_HILL_CLIMB) // #8
+                isAllocdWithNew = false;
             #endif
-            #if defined(MULTIPLE_BIASES_PER_LAYER) // TODO: REDUCE_RAM_BIASES "common reference"
-                #if defined(HAS_GATED_OUTPUTS)
-                    biasesFromPoint += layer_[i + 1] * NUMBER_OF_PATHS; // GRU 3 gates * Units\layer_[i] | (TensorFlow GRU(...reset_after=False)) if True then this should be: 3 gates * Units * 2 bias_vectors) // LSTM 4 gates * Units\layer_[i] = Forget Update Output CellState // RNN 1
+            #if defined(SINGLE_TIMESTEP_THRESHOLD)
+                threshold = _threshold;
+                atIndex   = _atIndex;
+            #endif
+            numberOflayers = NumberOflayers - 1;
+
+            layers = new Layer[numberOflayers]; // there has to be a faster way by alocating memory for example...
+            #if defined(ACTIVATION__PER_LAYER) or defined(MULTIPLE_NN_TYPE_ARCHITECTURES)
+                PropsPerLayer = _PropsPerLayer;
+            #endif  
+            
+            #if defined(REDUCE_RAM_STATIC_REFERENCE)
+                me = this;
+            #endif
+
+            #if defined(REDUCE_RAM_WEIGHTS_LVL2)
+                weights = default_Weights;
+            #else
+                unsigned int weightsFromPoint = 0;
+            #endif
+
+            // TODO: it might be a great idea to add an optimization removing biasesFromPoint and using plain i * ... computations for sketch-size reduction via a macro like `REDUCE_SKETCH_SIZE_AT_CONSTRUCTOR`
+            #if defined(MULTIPLE_BIASES_PER_LAYER) // TODO: REDUCE_RAM_BIASES "common reference" | 2024-03-12 04:01:04 PM todo γιατι οπως μου ειχε πει "ενα ροζ συννεφακι": "κανε ενα-ενα τα πραγματα, οχι ολα μαζι..."
+                unsigned int biasesFromPoint = 0;
+            #endif
+
+            for (unsigned int i = 0; i < numberOflayers; i++)
+            {
+                #if defined(REDUCE_RAM_WEIGHTS_LVL2) // #1.1
+                    #if defined(NO_BIAS)
+                        layers[i] = Layer(layer_[i], layer_[i + 1], HAS_NO_BIAS OPTIONAL_LAYER_TYPE_ARCHITECTURE(PropsPerLayer[i].arch), this);
+                    #elif defined(MULTIPLE_BIASES_PER_LAYER) // TODO: REDUCE_RAM_BIASES "common reference"
+                        layers[i] = Layer(layer_[i], layer_[i + 1], &default_Bias[biasesFromPoint] OPTIONAL_LAYER_TYPE_ARCHITECTURE(PropsPerLayer[i].arch),this);
+                    #else
+                        layers[i] = Layer(layer_[i], layer_[i + 1], &default_Bias[i] OPTIONAL_LAYER_TYPE_ARCHITECTURE(PropsPerLayer[i].arch),this);
+                    #endif
                 #else
-                    biasesFromPoint += layer_[i + 1]; // even for USE_RNN_LAYERS_ONLY or USE_PAIR__DENSE_RNN is ok
+                    #if defined(NO_BIAS)
+                        layers[i] = Layer(layer_[i], layer_[i + 1], &default_Weights[weightsFromPoint] OPTIONAL_LAYER_TYPE_ARCHITECTURE(PropsPerLayer[i].arch), this);
+                    #elif defined(MULTIPLE_BIASES_PER_LAYER) // TODO: REDUCE_RAM_BIASES "common reference"
+                        layers[i] = Layer(layer_[i], layer_[i + 1], &default_Weights[weightsFromPoint], &default_Bias[biasesFromPoint] OPTIONAL_LAYER_TYPE_ARCHITECTURE(PropsPerLayer[i].arch),this);
+                    #else
+                        layers[i] = Layer(layer_[i], layer_[i + 1], &default_Weights[weightsFromPoint], &default_Bias[i] OPTIONAL_LAYER_TYPE_ARCHITECTURE(PropsPerLayer[i].arch),this);
+                    #endif
+
+                    weightsFromPoint += NUMBER_FROM(layer_[i], layer_[i + 1], PropsPerLayer[i].arch); 
                 #endif
+                #if defined(MULTIPLE_BIASES_PER_LAYER) // TODO: REDUCE_RAM_BIASES "common reference"
+                    #if defined(HAS_GATED_OUTPUTS)
+                        biasesFromPoint += layer_[i + 1] * NUMBER_OF_PATHS; // GRU 3 gates * Units\layer_[i] | (TensorFlow GRU(...reset_after=False)) if True then this should be: 3 gates * Units * 2 bias_vectors) // LSTM 4 gates * Units\layer_[i] = Forget Update Output CellState // RNN 1
+                    #else
+                        biasesFromPoint += layer_[i + 1]; // even for USE_RNN_LAYERS_ONLY or USE_PAIR__DENSE_RNN is ok
+                    #endif
+                #endif
+            }
+
+            #if defined(REDUCE_RAM_DELETE_OUTPUTS)
+                layers[numberOflayers -1].outputs = NULL;
             #endif
         }
+    #endif
 
-        #if defined(REDUCE_RAM_DELETE_OUTPUTS)
-            layers[numberOflayers -1].outputs = NULL;
-        #endif
-    }
 
     #if !defined(NO_BACKPROP) || defined(RAM_EFFICIENT_HILL_CLIMB)
         NeuralNetwork::NeuralNetwork(const unsigned int *layer_, const unsigned int &NumberOflayers OPTIONAL_TIME(const byte _threshold, const byte _atIndex), const DFLOAT LRw OPTIONAL_BIAS(const DFLOAT LRb),  LayerType *_PropsPerLayer )
@@ -2061,7 +2085,7 @@ public:
                 me = this;
             #endif
 
-            #if defined(REDUCE_RAM_WEIGHTS_LVL2) //footprint episis san leksi // TODO: SIMD
+            #if defined(REDUCE_RAM_WEIGHTS_LVL2) //footprint episis san leksi // TODO: DSP
                 for (unsigned int i = 0; i < numberOflayers; i++)
                     i_j += NUMBER_FROM(layer_[i], layer_[i + 1], PropsPerLayer[i].arch);
                 
@@ -2081,6 +2105,7 @@ public:
 
     #if defined(INCLUDES_EEPROM_H)
         #define IN_EXTERNAL_TYPE_MEMMORY
+        #define IN_EXTERNAL_TYPE_MEMMORY_P
         #define TYPE_MEMMORY_GET EEPROM.get
         #define TYPE_MEMMORY_PUT EEPROM.put
         #define TYPE_MEMMORY_ME_GET EEPROM.get
@@ -2092,6 +2117,7 @@ public:
         #define TYPE_MEMMORY_ME_GET me->fram->readObject
         #define TYPE_MEMMORY_READ fram->read8
         #define IN_EXTERNAL_TYPE_MEMMORY fram,
+        #define IN_EXTERNAL_TYPE_MEMMORY_P *fram,
         #define TYPE_MEMMORY_PUT fram.writeObject
         #define PRINT_MESSAGE_INT_Q "INT_Q EXTERNAL-FRAM "
         #define PRINT_MESSAGE_TYPE_MEM "EXTERNAL-FRAM "
@@ -2447,44 +2473,93 @@ public:
 
 
     #if defined(RAM_EFFICIENT_HILL_CLIMB) or defined(RAM_EFFICIENT_HILL_CLIMB_WITHOUT_NEW)
-        void NeuralNetwork::climb(int8_t direction) 
-        {
-            // TODO: It should be pretty simple to train entirely on FRAM
+        #if defined(USE_INTERNAL_EEPROM) or defined(USE_EXTERNAL_FRAM)
+            void NeuralNetwork::climb(int8_t direction)
+            {
+                unsigned int tmp_addr = address;  // TODO: make a variable of the function and pass address
+                IDFLOAT tmp_w;
 
-            #if defined(REDUCE_RAM_WEIGHTS_LVL2)
-                i_j = 0;
-            #endif
-
-            #if defined(HILL_CLIMB_DYNAMIC_LEARNING_RATES) // #11
-                OldLearningRateOfWeights = LearningRateOfWeights;
-                #if !defined(NO_BIAS)
-                    OldLearningRateOfBiases = LearningRateOfBiases;
+                #if defined(HILL_CLIMB_DYNAMIC_LEARNING_RATES) // #11
+                    OldLearningRateOfWeights = LearningRateOfWeights;
+                    #if !defined(NO_BIAS)
+                        OldLearningRateOfBiases = LearningRateOfBiases;
+                    #endif
                 #endif
-            #endif
-            
-            // NN_RANDOM(-1,2) means {-1,0,1}
-            for (unsigned int l = 0; l < numberOflayers; l++){
-                #if !defined(NO_BIAS) && !defined(MULTIPLE_BIASES_PER_LAYER) // TODO: REDUCE_RAM_BIASES "common reference"
-                    *layers[l].bias += (LearningRateOfBiases * NN_RANDOM(-1,2) * direction);
-                #endif
-                for(unsigned int p=0; p< NUMBER_OF_PATHS; p++){ // p = path | NOTE: (As fas as I am aware) the compiler is smart enough to optimize\inline this block when NUMBER_OF_PATHS = 1 since it's just a const and always executes once
-                    for (unsigned int i = 0; i < layers[l]._numberOfOutputs; i++){
-                        #if defined(MULTIPLE_BIASES_PER_LAYER) // TODO: REDUCE_RAM_BIASES "common reference"
-                            layers[l].bias[i + (p * layers[l]._numberOfOutputs)] += (LearningRateOfBiases * NN_RANDOM(-1,2) * direction);
+                
+                // NN_RANDOM(-1,2) means {-1,0,1}
+                for (unsigned int l = 0; l < numberOflayers; l++){
+                    #if defined(ACTIVATION__PER_LAYER) or defined(MULTIPLE_NN_TYPE_ARCHITECTURES) // #34 + // NOTE: Don't get fooled see #36
+                        tmp_addr += SIZEOF_FX
+                    #endif
+                    #if defined(SINGLE_BIAS_PER_LAYER)
+                        #if defined(USE_INTERNAL_EEPROM)
+                            put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY_P  tmp_addr, (IDFLOAT)(TYPE_MEMMORY_GET(tmp_addr, tmp_w) + (LearningRateOfBiases * NN_RANDOM(-1,2) * direction)));
+                        #else // USE_EXTERNAL_FRAM
+                            TYPE_MEMMORY_GET(tmp_addr, tmp_w);
+                            put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY_P  tmp_addr, (IDFLOAT)(tmp_w + (LearningRateOfBiases * NN_RANDOM(-1,2) * direction)));
                         #endif
-                        for (unsigned int j = 0; j < SIZEOF_FROM(layers[l]._numberOfInputs, layers[l]._numberOfOutputs, PropsPerLayer[l].arch); j++)
-                        {
-                            #if defined(REDUCE_RAM_WEIGHTS_LVL2)
-                                weights[i_j++] += (LearningRateOfWeights * NN_RANDOM(-1,2) * direction);
-                            #else
-                                // eew! but whatever for now... at least for NUMBER_OF_PATHS == 1 it gets optimised
-                                layers[l].weights[i][j + (p * SIZEOF_FROM(layers[l]._numberOfInputs, layers[l]._numberOfOutputs, PropsPerLayer[l].arch))] += (LearningRateOfWeights * NN_RANDOM(-1,2) * direction);
+                    #endif
+                    for(unsigned int p=0; p< NUMBER_OF_PATHS; p++){ // p = path | NOTE: (As fas as I am aware) the compiler is smart enough to optimize\inline this block when NUMBER_OF_PATHS = 1 since it's just a const and always executes once
+                        for (unsigned int i = 0; i < layers[l]._numberOfOutputs; i++){
+                            #if defined(MULTIPLE_BIASES_PER_LAYER)
+                                #if defined(USE_INTERNAL_EEPROM)
+                                    put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY_P  tmp_addr, (IDFLOAT)(TYPE_MEMMORY_GET(tmp_addr, tmp_w) + (LearningRateOfBiases * NN_RANDOM(-1,2) * direction)));
+                                #else // USE_EXTERNAL_FRAM
+                                    TYPE_MEMMORY_GET(tmp_addr, tmp_w);
+                                    put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY_P  tmp_addr, (IDFLOAT)(tmp_w + (LearningRateOfBiases * NN_RANDOM(-1,2) * direction)));
+                                #endif
                             #endif
+                            for (unsigned int j = 0; j < SIZEOF_FROM(layers[l]._numberOfInputs, layers[l]._numberOfOutputs, PropsPerLayer[l].arch); j++)
+                            {
+                                #if defined(USE_INTERNAL_EEPROM)
+                                    put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY_P  tmp_addr, (IDFLOAT)(TYPE_MEMMORY_GET(tmp_addr, tmp_w) + (LearningRateOfWeights * NN_RANDOM(-1,2) * direction)));
+                                #else // USE_EXTERNAL_FRAM
+                                    TYPE_MEMMORY_GET(tmp_addr, tmp_w);
+                                    put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY_P  tmp_addr, (IDFLOAT)(tmp_w + (LearningRateOfWeights * NN_RANDOM(-1,2) * direction)));
+                                #endif
+                            }
                         }
                     }
                 }
             }
-        }
+        #else
+            void NeuralNetwork::climb(int8_t direction)
+            {
+                #if defined(REDUCE_RAM_WEIGHTS_LVL2)
+                    i_j = 0;
+                #endif
+
+                #if defined(HILL_CLIMB_DYNAMIC_LEARNING_RATES) // #11
+                    OldLearningRateOfWeights = LearningRateOfWeights;
+                    #if !defined(NO_BIAS)
+                        OldLearningRateOfBiases = LearningRateOfBiases;
+                    #endif
+                #endif
+                
+                // NN_RANDOM(-1,2) means {-1,0,1}
+                for (unsigned int l = 0; l < numberOflayers; l++){
+                    #if defined(SINGLE_BIAS_PER_LAYER) // TODO: REDUCE_RAM_BIASES "common reference"
+                        *layers[l].bias += (LearningRateOfBiases * NN_RANDOM(-1,2) * direction);
+                    #endif
+                    for(unsigned int p=0; p< NUMBER_OF_PATHS; p++){ // p = path | NOTE: (As fas as I am aware) the compiler is smart enough to optimize\inline this block when NUMBER_OF_PATHS = 1 since it's just a const and always executes once
+                        for (unsigned int i = 0; i < layers[l]._numberOfOutputs; i++){
+                            #if defined(MULTIPLE_BIASES_PER_LAYER) // TODO: REDUCE_RAM_BIASES "common reference"
+                                layers[l].bias[i + (p * layers[l]._numberOfOutputs)] += (LearningRateOfBiases * NN_RANDOM(-1,2) * direction);
+                            #endif
+                            for (unsigned int j = 0; j < SIZEOF_FROM(layers[l]._numberOfInputs, layers[l]._numberOfOutputs, PropsPerLayer[l].arch); j++)
+                            {
+                                #if defined(REDUCE_RAM_WEIGHTS_LVL2)
+                                    weights[i_j++] += (LearningRateOfWeights * NN_RANDOM(-1,2) * direction);
+                                #else
+                                    // eew! but whatever for now... at least for NUMBER_OF_PATHS == 1 it gets optimised
+                                    layers[l].weights[i][j + (p * SIZEOF_FROM(layers[l]._numberOfInputs, layers[l]._numberOfOutputs, PropsPerLayer[l].arch))] += (LearningRateOfWeights * NN_RANDOM(-1,2) * direction);
+                                #endif
+                            }
+                        }
+                    }
+                }
+            }
+        #endif
 
 
         /*
@@ -2602,7 +2677,7 @@ public:
                     #endif
                     myFile.write(reinterpret_cast<CHAR_BYTE*>(&layers[n]._numberOfInputs), sizeof(NeuralNetwork::Layer::_numberOfInputs));
                     myFile.write(reinterpret_cast<CHAR_BYTE*>(&layers[n]._numberOfOutputs), sizeof(NeuralNetwork::Layer::_numberOfOutputs));
-                    #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+                    #if defined(SINGLE_BIAS_PER_LAYER)
                         myFile.write(reinterpret_cast<CHAR_BYTE*>(layers[n].bias), sizeof(*NeuralNetwork::Layer::bias));
                     #endif
                     // TODO: make an i_j loop for REDUCE_RAM_WEIGHTS_LVL2 instead
@@ -2660,7 +2735,7 @@ public:
                         #endif
                         myFile.println(layers[n]._numberOfInputs); 
                         myFile.println(layers[n]._numberOfOutputs); 
-                        #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+                        #if defined(SINGLE_BIAS_PER_LAYER)
                             myFile.println(CAST_TO_LLONG_IF_NOT_INT_QUANTIZATION(*layers[n].bias)); 
                         #endif
 
@@ -2740,13 +2815,12 @@ public:
                     #endif
                     myFile.read(reinterpret_cast<CHAR_BYTE*>(&tmp_layerInputs), sizeof(tmp_layerInputs));
                     myFile.read(reinterpret_cast<CHAR_BYTE*>(&tmp_layerOutputs), sizeof(tmp_layerOutputs));
-                    #if !defined(NO_BIAS)
-                        #if !defined(MULTIPLE_BIASES_PER_LAYER)
-                            tmp_bias  = new IDFLOAT;
-                            myFile.read(reinterpret_cast<CHAR_BYTE*>(tmp_bias), sizeof(*tmp_bias));
-                        #else
-                            tmp_bias = new IDFLOAT[tmp_layerOutputs * NUMBER_OF_PATHS]; // reminder: this is fine for NOT-REDUCE_RAM_WEIGHTS_LVL2 too
-                        #endif
+
+                    #if defined(SINGLE_BIAS_PER_LAYER)
+                        tmp_bias = new IDFLOAT;
+                        myFile.read(reinterpret_cast<CHAR_BYTE*>(tmp_bias), sizeof(*tmp_bias));
+                    #elif defined(MULTIPLE_BIASES_PER_LAYER)
+                        tmp_bias = new IDFLOAT[tmp_layerOutputs * NUMBER_OF_PATHS]; // reminder: this is fine for NOT-REDUCE_RAM_WEIGHTS_LVL2 too
                     #endif
 
                     #if !defined(REDUCE_RAM_WEIGHTS_LVL2) // #1.1
@@ -2870,19 +2944,18 @@ public:
                         #endif      
                         tmp_layerInputs  = myFile.readStringUntil('\n').toInt();
                         tmp_layerOutputs = myFile.readStringUntil('\n').toInt();
-                        #if !defined(NO_BIAS)
-                            #if !defined(MULTIPLE_BIASES_PER_LAYER)
-                                #if !defined(USE_INT_QUANTIZATION)
-                                    tmp       = ATOL((char*)myFile.readStringUntil('\n').c_str());
-                                    tmp_bias  = new DFLOAT;
-                                    *tmp_bias = *((DFLOAT*)(&tmp));
-                                #else
-                                    tmp_bias  = new IDFLOAT;
-                                    *tmp_bias = (IDFLOAT)strtol((char*)myFile.readStringUntil('\n').c_str(), NULL, 10);
-                                #endif
+
+                        #if defined(SINGLE_BIAS_PER_LAYER)
+                            #if !defined(USE_INT_QUANTIZATION)
+                                tmp       = ATOL((char*)myFile.readStringUntil('\n').c_str());
+                                tmp_bias  = new DFLOAT;
+                                *tmp_bias = *((DFLOAT*)(&tmp));
                             #else
-                                tmp_bias  = new IDFLOAT[tmp_layerOutputs];
+                                tmp_bias  = new IDFLOAT;
+                                *tmp_bias = (IDFLOAT)strtol((char*)myFile.readStringUntil('\n').c_str(), NULL, 10);
                             #endif
+                        #elif defined(MULTIPLE_BIASES_PER_LAYER)
+                            tmp_bias  = new IDFLOAT[tmp_layerOutputs];
                         #endif
 
                         #if !defined(REDUCE_RAM_WEIGHTS_LVL2) // #1.1
@@ -2974,7 +3047,7 @@ public:
             }
         #endif
     #endif
-    #if (defined(INCLUDES_EEPROM_H) or defined(INCLUDES_FRAM_H)) and !(defined(USE_INTERNAL_EEPROM) or defined(USE_EXTERNAL_FRAM))
+    #if (defined(INCLUDES_EEPROM_H) or defined(INCLUDES_FRAM_H))
 
         #if defined(INCLUDES_FRAM_H)
             template< typename T > void NeuralNetwork::put_type_memmory_value(FRAM &fram, unsigned int &addr, T val)
@@ -2986,64 +3059,67 @@ public:
                 addr += sizeof(T);
             }
 
-        // Because if it is just #included then it is not used, therefore we have to pass an fram object
-        #if defined(INCLUDES_FRAM_H)
-            unsigned int NeuralNetwork::save(FRAM &fram, unsigned int atAddress)
-        #else
-            unsigned int NeuralNetwork::save(unsigned int atAddress)
-        #endif
-            {
-                unsigned int tmp_addr = 0;
-                #if defined(REDUCE_RAM_WEIGHTS_LVL2)
-                    i_j = 0;
-                #endif
-                #if defined(SINGLE_TIMESTEP_THRESHOLD)
-                    put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  atAddress, threshold);
-                    put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  atAddress, atIndex);
-                #endif
-                put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  atAddress, numberOflayers);
-                tmp_addr = atAddress;
-                #if defined(MULTIPLE_NN_TYPE_ARCHITECTURES)
-                    atAddress += (numberOflayers+1)*sizeof(numberOflayers) + (numberOflayers+1)*sizeof(LayerType); // LayerProps in this case
-                #else
-                    atAddress += (numberOflayers+1)*sizeof(numberOflayers);
-                #endif
-                for(unsigned int n=0; n<numberOflayers; n++){
-                    put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  tmp_addr, layers[n]._numberOfInputs); // NOTE: those 2-lines are in tmp_addr
-                    #if defined(MULTIPLE_NN_TYPE_ARCHITECTURES)
-                        put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  tmp_addr, PropsPerLayer[n].arch); // yep.. extra byte for the sake of simplicity later on at the constructor (feel free to blame me :P)
-                    #endif
-                    #if defined(ACTIVATION__PER_LAYER) or defined(MULTIPLE_NN_TYPE_ARCHITECTURES)
-                        put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  atAddress, PropsPerLayer[n]);
-                    #endif
-                    #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
-                        put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  atAddress, TYPE_MEMMORY_READ_IDFLOAT(*layers[n].bias));
-                    #endif
-                    for(unsigned int p=0; p< NUMBER_OF_PATHS; p++){ // p = path | NOTE: (As fas as I am aware) the compiler is smart enough to optimize\inline this block when NUMBER_OF_PATHS = 1 since it's just a const and always executes once
-                        for(unsigned int i=0; i<layers[n]._numberOfOutputs; i++){
-                            #if defined(MULTIPLE_BIASES_PER_LAYER)
-                                put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  atAddress, TYPE_MEMMORY_READ_IDFLOAT(layers[n].bias[i + (layers[n]._numberOfOutputs * p)]));
-                            #endif
 
-                            //WARN: ##21 File compatibility is not guaranteed between MCUs compiled with REDUCE_RAM_WEIGHTS_LVL2 enabled and those compiled with it disabled, SPECIFICALLY for GRU and LSTM layers.
-                            // Additionally in the SPECIFIC case of GRU or LSTM using either FRAM or EEPROM without REDUCE_RAM_WEIGHTS_LVL2 the file won't be loadable after saving. You may ask why I don't make it loadable... 
-                            // because the momment I make it loadable it will brake an upcomming feature I want to implement that has to do with off-loading to RAM therefore it's best to keep REDUCE_RAM_WEIGHTS_LVL2-
-                            // logic by default (since it is common with the current sate of EEPROM and FRAM in term of how the weights are organized) [...]
-                            for(unsigned int j=0; j<SIZEOF_FROM(layers[n]._numberOfInputs, layers[n]._numberOfOutputs, PropsPerLayer[n].arch); j++)
-                            {
-                                #if defined(REDUCE_RAM_WEIGHTS_LVL2)
-                                    put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  atAddress, TYPE_MEMMORY_READ_IDFLOAT(weights[i_j++]));
-                                #else
-                                    put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  atAddress, TYPE_MEMMORY_READ_IDFLOAT(layers[n].weights[i][j + (p * SIZEOF_FROM(layers[n]._numberOfInputs, layers[n]._numberOfOutputs, PropsPerLayer[n].arch))]));
+        #if !(defined(USE_INTERNAL_EEPROM) or defined(USE_EXTERNAL_FRAM))
+            // Because if it is just #included then it is not used, therefore we have to pass an fram object
+            #if defined(INCLUDES_FRAM_H)
+                unsigned int NeuralNetwork::save(FRAM &fram, unsigned int atAddress)
+            #else
+                unsigned int NeuralNetwork::save(unsigned int atAddress)
+            #endif
+                {
+                    unsigned int tmp_addr = 0;
+                    #if defined(REDUCE_RAM_WEIGHTS_LVL2)
+                        i_j = 0;
+                    #endif
+                    #if defined(SINGLE_TIMESTEP_THRESHOLD)
+                        put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  atAddress, threshold);
+                        put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  atAddress, atIndex);
+                    #endif
+                    put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  atAddress, numberOflayers);
+                    tmp_addr = atAddress;
+                    #if defined(MULTIPLE_NN_TYPE_ARCHITECTURES)
+                        atAddress += (numberOflayers+1)*sizeof(numberOflayers) + (numberOflayers+1)*sizeof(LayerType); // LayerProps in this case
+                    #else
+                        atAddress += (numberOflayers+1)*sizeof(numberOflayers);
+                    #endif
+                    for(unsigned int n=0; n<numberOflayers; n++){
+                        put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  tmp_addr, layers[n]._numberOfInputs); // NOTE: those 2-lines are in tmp_addr ##36
+                        #if defined(MULTIPLE_NN_TYPE_ARCHITECTURES)
+                            put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  tmp_addr, PropsPerLayer[n].arch); // yep.. extra byte for the sake of simplicity later on at the constructor (feel free to blame me :P)
+                        #endif
+                        #if defined(ACTIVATION__PER_LAYER) or defined(MULTIPLE_NN_TYPE_ARCHITECTURES)
+                            put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  atAddress, PropsPerLayer[n]);
+                        #endif
+                        #if defined(SINGLE_BIAS_PER_LAYER)
+                            put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  atAddress, TYPE_MEMMORY_READ_IDFLOAT(*layers[n].bias));
+                        #endif
+                        for(unsigned int p=0; p< NUMBER_OF_PATHS; p++){ // p = path | NOTE: (As far as I am aware) the compiler is smart enough to optimize\inline this block when NUMBER_OF_PATHS = 1 since it's just a const and always executes once
+                            for(unsigned int i=0; i<layers[n]._numberOfOutputs; i++){
+                                #if defined(MULTIPLE_BIASES_PER_LAYER)
+                                    put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  atAddress, TYPE_MEMMORY_READ_IDFLOAT(layers[n].bias[i + (layers[n]._numberOfOutputs * p)]));
                                 #endif
+
+                                //WARN: ##21 File compatibility is not guaranteed between MCUs compiled with REDUCE_RAM_WEIGHTS_LVL2 enabled and those compiled with it disabled, SPECIFICALLY for GRU and LSTM layers.
+                                // Additionally in the SPECIFIC case of GRU or LSTM using either FRAM or EEPROM without REDUCE_RAM_WEIGHTS_LVL2 the file won't be loadable after saving. You may ask why I don't make it loadable... 
+                                // because the momment I make it loadable it will brake an upcomming feature I want to implement that has to do with off-loading to RAM therefore it's best to keep REDUCE_RAM_WEIGHTS_LVL2-
+                                // logic by default (since it is common with the current sate of EEPROM and FRAM in term of how the weights are organized) [...]
+                                for(unsigned int j=0; j<SIZEOF_FROM(layers[n]._numberOfInputs, layers[n]._numberOfOutputs, PropsPerLayer[n].arch); j++)
+                                {
+                                    #if defined(REDUCE_RAM_WEIGHTS_LVL2)
+                                        put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  atAddress, TYPE_MEMMORY_READ_IDFLOAT(weights[i_j++]));
+                                    #else
+                                        put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  atAddress, TYPE_MEMMORY_READ_IDFLOAT(layers[n].weights[i][j + (p * SIZEOF_FROM(layers[n]._numberOfInputs, layers[n]._numberOfOutputs, PropsPerLayer[n].arch))]));
+                                    #endif
+                                }
                             }
                         }
                     }
+                    put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  tmp_addr, layers[numberOflayers-1]._numberOfOutputs);
+                    return atAddress;
                 }
-                put_type_memmory_value(IN_EXTERNAL_TYPE_MEMMORY  tmp_addr, layers[numberOflayers-1]._numberOfOutputs);
-                return atAddress;
-            }
-    #endif
+        #endif // !(defined(USE_INTERNAL_EEPROM) or defined(USE_EXTERNAL_FRAM))
+    #endif // (defined(INCLUDES_EEPROM_H) or defined(INCLUDES_FRAM_H))
 
     //If Microcontroller isn't one of the .._No_Common_Serial_Support Series then it compiles the code below.
     #if !defined(AS__NO_COMMON_SERIAL_SUPPORT) // then Compile:
@@ -3245,8 +3321,61 @@ public:
 
 
 
-    #if !defined(REDUCE_RAM_WEIGHTS_LVL2) // #1.1
-        NeuralNetwork::Layer::Layer(const unsigned int NumberOfInputs, const unsigned int NumberOfOutputs, IS_CONST IDFLOAT *default_Weights OPTIONAL_BIAS(IS_CONST IDFLOAT *default_Bias) OPTIONAL_LAYER_TYPE_ARCHITECTURE(byte layerArchitecture), NeuralNetwork * const NN )
+    #if !defined(USE_INTERNAL_EEPROM) and !defined(USE_EXTERNAL_FRAM)
+        #if !defined(REDUCE_RAM_WEIGHTS_LVL2) // #1.1
+            NeuralNetwork::Layer::Layer(const unsigned int NumberOfInputs, const unsigned int NumberOfOutputs, IS_CONST IDFLOAT *default_Weights OPTIONAL_BIAS(IS_CONST IDFLOAT *default_Bias) OPTIONAL_LAYER_TYPE_ARCHITECTURE(byte layerArchitecture), NeuralNetwork * const NN )
+            {
+                _numberOfInputs = NumberOfInputs;   //  (this) layer's  Number of Inputs .
+                _numberOfOutputs = NumberOfOutputs; //           ##1    Number of Outputs.
+
+                #if !defined(REDUCE_RAM_STATIC_REFERENCE)
+                    me = NN;
+                #endif
+
+                #if !defined(REDUCE_RAM_DELETE_OUTPUTS)
+                    outputs = new DFLOAT[_numberOfOutputs]; //    ##1    New Array of Outputs.
+                #endif
+
+                #if defined(HAS_GATED_OUTPUTS) && !defined(REDUCE_RAM_DELETE__GATED_OUTPUTS)
+                    gatedOutputs = new DFLOAT[_numberOfOutputs];
+                #endif
+
+                #if defined(HAS_HIDDEN_STATES)
+                    #if defined(USE_DENSE_PAIR)
+                        if (layerArchitecture) // DENSE = 0
+                            hiddenStates = new DFLOAT[_numberOfOutputs]{}; // NOTE: {}
+                    #else
+                        hiddenStates = new DFLOAT[_numberOfOutputs]; 
+                    #endif
+                #endif
+
+                #if defined(USE_LSTM_LAYERS_ONLY)
+                    cellStates = new DFLOAT[_numberOfOutputs];
+                #endif
+
+                #if !defined(NO_BIAS) // TODO: REDUCE_RAM_BIASES "common reference"
+                    bias = default_Bias; //                          ##1    Bias as Default Bias. Biases if defined MULTIPLE_BIASES_PER_LAYER | A reference
+                #endif
+                weights = new IS_CONST IDFLOAT *[_numberOfOutputs]; //      ##1    New Array of Pointers to (IDFLOAT) weights.
+
+                for (unsigned int i = 0; i < _numberOfOutputs; i++){              // [matrix] (_numberOfOutputs * _numberOfInputs)
+                    #if defined(HAS_HIDDEN_STATES) and !defined(USE_DENSE_PAIR)
+                        hiddenStates[i] = 0;
+                    #endif
+                    #if defined(USE_LSTM_LAYERS_ONLY)
+                        cellStates[i] = 0;
+                    #endif
+                    weights[i] = &default_Weights[INDEX_FROM(i, _numberOfInputs, _numberOfOutputs, layerArchitecture)]; // Passing Default weights to ##1 weights by reference.  
+                }
+            }
+        #endif
+
+
+        #if defined(NO_BIAS)
+            NeuralNetwork::Layer::Layer(const unsigned int NumberOfInputs, const unsigned int NumberOfOutputs, bool has_no_bias OPTIONAL_LAYER_TYPE_ARCHITECTURE(byte layerArchitecture), NeuralNetwork * const NN ) // has_no_bias is something the compiler i'm 99% sure it will optimize\remove
+        #else
+            NeuralNetwork::Layer::Layer(const unsigned int NumberOfInputs, const unsigned int NumberOfOutputs, IS_CONST IDFLOAT *default_Bias OPTIONAL_LAYER_TYPE_ARCHITECTURE(byte layerArchitecture), NeuralNetwork * const NN )
+        #endif
         {
             _numberOfInputs = NumberOfInputs;   //  (this) layer's  Number of Inputs .
             _numberOfOutputs = NumberOfOutputs; //           ##1    Number of Outputs.
@@ -3266,75 +3395,27 @@ public:
             #if defined(HAS_HIDDEN_STATES)
                 #if defined(USE_DENSE_PAIR)
                     if (layerArchitecture) // DENSE = 0
-                        hiddenStates = new DFLOAT[_numberOfOutputs]{}; // NOTE: {}
+                        hiddenStates = new DFLOAT[_numberOfOutputs]{};
                 #else
-                    hiddenStates = new DFLOAT[_numberOfOutputs]; 
+                    hiddenStates = new DFLOAT[_numberOfOutputs]{}; 
                 #endif
             #endif
 
             #if defined(USE_LSTM_LAYERS_ONLY)
-                cellStates = new DFLOAT[_numberOfOutputs];
+                cellStates = new DFLOAT[_numberOfOutputs]{};
             #endif
-
-            #if !defined(NO_BIAS) // TODO: REDUCE_RAM_BIASES "common reference"
+            
+            #if !defined(NO_BIAS)
                 bias = default_Bias; //                          ##1    Bias as Default Bias. Biases if defined MULTIPLE_BIASES_PER_LAYER | A reference
             #endif
-            weights = new IS_CONST IDFLOAT *[_numberOfOutputs]; //      ##1    New Array of Pointers to (IDFLOAT) weights.
-
-            for (unsigned int i = 0; i < _numberOfOutputs; i++){              // [matrix] (_numberOfOutputs * _numberOfInputs)
-                #if defined(HAS_HIDDEN_STATES) and !defined(USE_DENSE_PAIR)
-                    hiddenStates[i] = 0;
-                #endif
-                #if defined(USE_LSTM_LAYERS_ONLY)
-                    cellStates[i] = 0;
-                #endif
-                weights[i] = &default_Weights[INDEX_FROM(i, _numberOfInputs, _numberOfOutputs, layerArchitecture)]; // Passing Default weights to ##1 weights by reference.  
-            }
         }
-    #endif
+    #endif // !defined(USE_INTERNAL_EEPROM) and !defined(USE_EXTERNAL_FRAM)
 
 
-    #if defined(NO_BIAS)
-        NeuralNetwork::Layer::Layer(const unsigned int NumberOfInputs, const unsigned int NumberOfOutputs, bool has_no_bias OPTIONAL_LAYER_TYPE_ARCHITECTURE(byte layerArchitecture), NeuralNetwork * const NN ) // has_no_bias is something the compiler i'm 99% sure it will optimize\remove
-    #else
-        NeuralNetwork::Layer::Layer(const unsigned int NumberOfInputs, const unsigned int NumberOfOutputs, IS_CONST IDFLOAT *default_Bias OPTIONAL_LAYER_TYPE_ARCHITECTURE(byte layerArchitecture), NeuralNetwork * const NN )
-    #endif
-    {
-        _numberOfInputs = NumberOfInputs;   //  (this) layer's  Number of Inputs .
-        _numberOfOutputs = NumberOfOutputs; //           ##1    Number of Outputs.
-
-        #if !defined(REDUCE_RAM_STATIC_REFERENCE)
-            me = NN;
-        #endif
-
-        #if !defined(REDUCE_RAM_DELETE_OUTPUTS)
-            outputs = new DFLOAT[_numberOfOutputs]; //    ##1    New Array of Outputs.
-        #endif
-
-        #if defined(HAS_GATED_OUTPUTS) && !defined(REDUCE_RAM_DELETE__GATED_OUTPUTS)
-            gatedOutputs = new DFLOAT[_numberOfOutputs];
-        #endif
-
-        #if defined(HAS_HIDDEN_STATES)
-            #if defined(USE_DENSE_PAIR)
-                if (layerArchitecture) // DENSE = 0
-                    hiddenStates = new DFLOAT[_numberOfOutputs]{};
-            #else
-                hiddenStates = new DFLOAT[_numberOfOutputs]{}; 
-            #endif
-        #endif
-
-        #if defined(USE_LSTM_LAYERS_ONLY)
-            cellStates = new DFLOAT[_numberOfOutputs]{};
-        #endif
-        
-        #if !defined(NO_BIAS)
-            bias = default_Bias; //                          ##1    Bias as Default Bias. Biases if defined MULTIPLE_BIASES_PER_LAYER | A reference
-        #endif
-    }
-
-    // NOTE: I added an `OR` because I'm planning to implement HILL_CLIMB for other types of memmory too
-    #if !defined(NO_BACKPROP) || !defined(NO_TRAINING_METHOD)
+    // NOTE: ..._HILL_CLIMB_WITHOUT_NEW (if i haven't had this one I'd had ##33 ERROR:  Redefinition of 'Layer' clang (redefinition))
+    // (..WITHOUT_NEW means, that you can NOT call a constructor that: initializes the weights internally [when passing just the structure of your NN to it])
+    // this is like: if there is backpropagation or some kind of other training method and that method is not ..._WITHOUT_NEW then enable layer-initialization of weights
+    #if defined(NN_WITH_TRAINING_METHOD) and !defined(RAM_EFFICIENT_HILL_CLIMB_WITHOUT_NEW)
         //- [ numberOfInputs in into this layer , NumberOfOutputs of this layer ]
         NeuralNetwork::Layer::Layer(const unsigned int NumberOfInputs, const unsigned int NumberOfOutputs OPTIONAL_LAYER_TYPE_ARCHITECTURE(byte layerArchitecture), NeuralNetwork * const NN) // TODO: IDFLOAT support 
         {
@@ -3371,7 +3452,7 @@ public:
                 #else          
                     bias = new IDFLOAT[_numberOfOutputs];                   // ##1    New          Biases  // even for USE_RNN_LAYERS_ONLY or USE_PAIR__DENSE_RNN is ok
                 #endif         
-            #elif !defined(NO_BIAS) // TODO: Investigate if with GRU or LSTM anything changes
+            #elif defined(SINGLE_BIAS_PER_LAYER) // TODO: Investigate if with GRU or LSTM anything changes
                 bias = new IDFLOAT;                                         // ##1    New          Bias   .
                 *bias = 1.0; // SuS cause IDFLOAT
             #endif
@@ -3417,7 +3498,7 @@ public:
     #endif
 
 
-    #if defined(USE_INTERNAL_EEPROM) or defined(USE_EXTERNAL_FRAM)
+    #if defined(USE_INTERNAL_EEPROM) or defined(USE_EXTERNAL_FRAM) // #33
         NeuralNetwork::Layer::Layer(const unsigned int NumberOfInputs, const unsigned int NumberOfOutputs OPTIONAL_LAYER_TYPE_ARCHITECTURE(byte layerArchitecture), NeuralNetwork * const NN )
         {
             _numberOfInputs = NumberOfInputs;   //  (this) layer's  Number of Inputs .
@@ -3455,11 +3536,11 @@ public:
         {
             #if defined(REDUCED_SKETCH_SIZE_DOT_PROD) // WARN: #26
                 do {
-                    *dest += (*src1++) * me->get_type_memmory_value<IDFLOAT>(me->address) MULTIPLY_BY_INT_IF_QUANTIZATION;
+                    *dest += (*src1++) * me->get_type_memmory_value<IDFLOAT>(me->address);
                 } while (--len);
             #else
                 for (unsigned int i = 0; i < len; i++)
-                    *dest += src1[i] * me->get_type_memmory_value<IDFLOAT>(me->address) MULTIPLY_BY_INT_IF_QUANTIZATION;
+                    *dest += src1[i] * me->get_type_memmory_value<IDFLOAT>(me->address);
             #endif
         }
     #endif
@@ -3477,9 +3558,9 @@ public:
                             outputs = new DFLOAT[_numberOfOutputs];
                         #endif
                         #if defined(ACTIVATION__PER_LAYER)
-                            me->F1 = GET_ACTIVATION_FUNCTION_FROM(me->get_type_memmory_value<byte>(me->address));
+                            me->F1 = GET_ACTIVATION_FUNCTION_FROM(me->get_type_memmory_value<byte>(me->address)); // NOTE: ##37 get_type_memmory_value<byte> not LayerType because it's never used here with paired nn-architectures
                         #endif
-                        #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+                        #if defined(SINGLE_BIAS_PER_LAYER)
                             bias = new IDFLOAT(me->get_type_memmory_value<IDFLOAT>(me->address));
                         #endif
                     }else{
@@ -3512,14 +3593,14 @@ public:
                             #if defined(NO_BIAS)
                                 outputs[i] = 0;
                             #else
-                                outputs[i] = *bias MULTIPLY_BY_INT_IF_QUANTIZATION;
+                                outputs[i] = *bias;
                             #endif
                         }
                         #if defined(USE_INTERNAL_EEPROM)
-                            outputs[i] += input * TYPE_MEMMORY_ME_GET(me->address + j*sizeof(IDFLOAT), tmp_jweight) MULTIPLY_BY_INT_IF_QUANTIZATION;
+                            outputs[i] += input * TYPE_MEMMORY_ME_GET(me->address + j*sizeof(IDFLOAT), tmp_jweight);
                         #else // USE_EXTERNAL_FRAM
                             TYPE_MEMMORY_ME_GET(me->address + j*sizeof(IDFLOAT), tmp_jweight);
-                            outputs[i] += input * tmp_jweight MULTIPLY_BY_INT_IF_QUANTIZATION;
+                            outputs[i] += input * tmp_jweight;
                         #endif
                         me->address += _numberOfInputs * sizeof(IDFLOAT); 
 
@@ -3527,12 +3608,12 @@ public:
                         if (j == _numberOfInputs -1){
                             accumulatedDotProduct(hiddenStates, &outputs[i], _numberOfOutputs); // WithSrc2Address
                             #if defined(ACTIVATION__PER_LAYER)
-                                outputs[i] = (IS_THIS(activation_Function_ptrs)[me->F1])(outputs[i]); // AtlayerIndex is always 0 because FeedForward_Individual always refers to first layer
+                                outputs[i] = (IS_THIS(activation_Function_ptrs)[me->F1])((outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION)); // AtlayerIndex is always 0 because FeedForward_Individual always refers to first layer
                             #elif defined(Softmax)
-                                outputs[i] = exp(outputs[i]);
+                                outputs[i] = exp((outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION));
                                 me->sumOfSoftmax += outputs[i];
                             #else
-                                outputs[i] = ACTIVATE_WITH(ACTIVATION_FUNCTION, outputs[i]); //  (neuron[i]'s output) = Sigmoid_Activation_Function_Value_Of((neuron[i]'s output))
+                                outputs[i] = ACTIVATE_WITH(ACTIVATION_FUNCTION, (outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION)); //  (neuron[i]'s output) = Sigmoid_Activation_Function_Value_Of((neuron[i]'s output))
                             #endif
                         }else{
                             me->address += _numberOfOutputs * sizeof(IDFLOAT); 
@@ -3546,7 +3627,7 @@ public:
                     #endif
 
                     if (j == _numberOfInputs -1){
-                        #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+                        #if defined(SINGLE_BIAS_PER_LAYER)
                             delete bias;
                         #endif
 
@@ -3581,9 +3662,9 @@ public:
                         outputs = new DFLOAT[_numberOfOutputs];
                     #endif
                     #if defined(ACTIVATION__PER_LAYER)
-                        me->F1 = GET_ACTIVATION_FUNCTION_FROM(me->get_type_memmory_value<byte>(me->address));
+                        me->F1 = GET_ACTIVATION_FUNCTION_FROM(me->get_type_memmory_value<byte>(me->address)); // NOTE: #37
                     #endif
-                    #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+                    #if defined(SINGLE_BIAS_PER_LAYER)
                         bias = new IDFLOAT(me->get_type_memmory_value<IDFLOAT>(me->address));
                     #endif
                 }else{
@@ -3616,14 +3697,14 @@ public:
                         #if defined(NO_BIAS)
                             outputs[i] = 0;
                         #else
-                            outputs[i] = *bias MULTIPLY_BY_INT_IF_QUANTIZATION;
+                            outputs[i] = *bias;
                         #endif
                     }
                     #if defined(USE_INTERNAL_EEPROM)
-                        outputs[i] += input * TYPE_MEMMORY_ME_GET(me->address + j*sizeof(IDFLOAT), tmp_jweight) MULTIPLY_BY_INT_IF_QUANTIZATION;
+                        outputs[i] += input * TYPE_MEMMORY_ME_GET(me->address + j*sizeof(IDFLOAT), tmp_jweight);
                     #else // USE_EXTERNAL_FRAM
                         TYPE_MEMMORY_ME_GET(me->address + j*sizeof(IDFLOAT), tmp_jweight);
-                        outputs[i] += input * tmp_jweight MULTIPLY_BY_INT_IF_QUANTIZATION;
+                        outputs[i] += input * tmp_jweight;
                     #endif
                     me->address += _numberOfInputs * sizeof(IDFLOAT); 
 
@@ -3633,12 +3714,12 @@ public:
                         //     accumulatedDotProduct(hiddenStates, &outputs[i], _numberOfOutputs); // WithSrc2Address
                         // #endif
                         #if defined(ACTIVATION__PER_LAYER)
-                            outputs[i] = (IS_THIS(activation_Function_ptrs)[me->F1])(outputs[i]); // AtlayerIndex is always 0 because FeedForward_Individual always refers to first layer
+                            outputs[i] = (IS_THIS(activation_Function_ptrs)[me->F1])((outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION)); // AtlayerIndex is always 0 because FeedForward_Individual always refers to first layer
                         #elif defined(Softmax)
-                            outputs[i] = exp(outputs[i]);
+                            outputs[i] = exp((outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION));
                             me->sumOfSoftmax += outputs[i];
                         #else
-                            outputs[i] = ACTIVATE_WITH(ACTIVATION_FUNCTION, outputs[i]); //  (neuron[i]'s output) = Sigmoid_Activation_Function_Value_Of((neuron[i]'s output))
+                            outputs[i] = ACTIVATE_WITH(ACTIVATION_FUNCTION, (outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION)); //  (neuron[i]'s output) = Sigmoid_Activation_Function_Value_Of((neuron[i]'s output))
                         #endif
                     // }else{ // #20
                     //     #if defined(USE_RNN_LAYERS_ONLY)
@@ -3654,7 +3735,7 @@ public:
                 #endif
 
                 if (j == _numberOfInputs -1){
-                    #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+                    #if defined(SINGLE_BIAS_PER_LAYER)
                         delete bias;
                     #endif
 
@@ -3697,16 +3778,16 @@ public:
                             #if defined(NO_BIAS)
                                 outputs[i] = 0; // ? speed ? safe one..
                             #elif defined(MULTIPLE_BIASES_PER_LAYER)                                                                                 // TODO: REDUCE_RAM_BIASES "common reference"
-                                outputs[i] = TYPE_MEMMORY_READ_IDFLOAT(bias[i]) MULTIPLY_BY_INT_IF_QUANTIZATION;
+                                outputs[i] = TYPE_MEMMORY_READ_IDFLOAT(bias[i]);
                             #else
-                                outputs[i] = TYPE_MEMMORY_READ_IDFLOAT(*bias) MULTIPLY_BY_INT_IF_QUANTIZATION;
+                                outputs[i] = TYPE_MEMMORY_READ_IDFLOAT(*bias);
                             #endif
                         }
 
                         #if defined(REDUCE_RAM_WEIGHTS_LVL2)
-                            outputs[i] += input * TYPE_MEMMORY_READ_IDFLOAT(me->weights[me->i_j+j]) MULTIPLY_BY_INT_IF_QUANTIZATION;
+                            outputs[i] += input * TYPE_MEMMORY_READ_IDFLOAT(me->weights[me->i_j+j]);
                         #else
-                            outputs[i] += input * TYPE_MEMMORY_READ_IDFLOAT(weights[i][j]) MULTIPLY_BY_INT_IF_QUANTIZATION; // if double pgm_read_dword 
+                            outputs[i] += input * TYPE_MEMMORY_READ_IDFLOAT(weights[i][j]); // if double pgm_read_dword 
                         #endif
 
                         #if defined(REDUCE_RAM_WEIGHTS_LVL2)
@@ -3721,12 +3802,12 @@ public:
                                 ACCUMULATED_DOT_PRODUCT_OF(hiddenStates, &weights[i][_numberOfInputs], &outputs[i], _numberOfOutputs);
                             #endif
                             #if defined(ACTIVATION__PER_LAYER)
-                                outputs[i] = (IS_THIS(activation_Function_ptrs)[GET_ACTIVATION_FUNCTION_FROM(me->PropsPerLayer[0])])(outputs[i]);  // AtlayerIndex is always 0 because FeedForward_Individual always refers to first layer
+                                outputs[i] = (IS_THIS(activation_Function_ptrs)[GET_ACTIVATION_FUNCTION_FROM(me->PropsPerLayer[0])])((outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION));  // AtlayerIndex is always 0 because FeedForward_Individual always refers to first layer
                             #elif defined(Softmax)
-                                outputs[i] = exp(outputs[i]);
+                                outputs[i] = exp((outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION));
                                 me->sumOfSoftmax += outputs[i];
                             #else
-                                outputs[i] = ACTIVATE_WITH(ACTIVATION_FUNCTION, outputs[i]); // if double pgm_read_dword //  (neuron[i]'s output) = Sigmoid_Activation_Function_Value_Of((neuron[i]'s output))
+                                outputs[i] = ACTIVATE_WITH(ACTIVATION_FUNCTION, (outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION)); // if double pgm_read_dword //  (neuron[i]'s output) = Sigmoid_Activation_Function_Value_Of((neuron[i]'s output))
                             #endif
                         }else{
                             #if defined(REDUCE_RAM_WEIGHTS_LVL2)
@@ -3779,16 +3860,16 @@ public:
                         #if defined(NO_BIAS)
                             outputs[i] = 0; // ? speed ? safe one..
                         #elif defined(MULTIPLE_BIASES_PER_LAYER)                                                                                 // TODO: REDUCE_RAM_BIASES "common reference"
-                            outputs[i] = TYPE_MEMMORY_READ_IDFLOAT(bias[i]) MULTIPLY_BY_INT_IF_QUANTIZATION;
+                            outputs[i] = TYPE_MEMMORY_READ_IDFLOAT(bias[i]);
                         #else
-                            outputs[i] = TYPE_MEMMORY_READ_IDFLOAT(*bias) MULTIPLY_BY_INT_IF_QUANTIZATION;
+                            outputs[i] = TYPE_MEMMORY_READ_IDFLOAT(*bias);
                         #endif
                     }
 
                     #if defined(REDUCE_RAM_WEIGHTS_LVL2)
-                        outputs[i] += input * TYPE_MEMMORY_READ_IDFLOAT(me->weights[me->i_j+j]) MULTIPLY_BY_INT_IF_QUANTIZATION;
+                        outputs[i] += input * TYPE_MEMMORY_READ_IDFLOAT(me->weights[me->i_j+j]);
                     #else
-                        outputs[i] += input * TYPE_MEMMORY_READ_IDFLOAT(weights[i][j]) MULTIPLY_BY_INT_IF_QUANTIZATION;
+                        outputs[i] += input * TYPE_MEMMORY_READ_IDFLOAT(weights[i][j]);
                     #endif
 
                     #if defined(REDUCE_RAM_WEIGHTS_LVL2)
@@ -3805,12 +3886,12 @@ public:
                         //     #endif
                         // #endif
                         #if defined(ACTIVATION__PER_LAYER)
-                            outputs[i] = (IS_THIS(activation_Function_ptrs)[GET_ACTIVATION_FUNCTION_FROM(me->PropsPerLayer[0])])(outputs[i]);  // AtlayerIndex is always 0 because FeedForward_Individual always refers to first layer
+                            outputs[i] = (IS_THIS(activation_Function_ptrs)[GET_ACTIVATION_FUNCTION_FROM(me->PropsPerLayer[0])])((outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION));  // AtlayerIndex is always 0 because FeedForward_Individual always refers to first layer
                         #elif defined(Softmax)
-                            outputs[i] = exp(outputs[i]);
+                            outputs[i] = exp((outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION));
                             me->sumOfSoftmax += outputs[i];
                         #else
-                            outputs[i] = ACTIVATE_WITH(ACTIVATION_FUNCTION, outputs[i]); // if double pgm_read_dword
+                            outputs[i] = ACTIVATE_WITH(ACTIVATION_FUNCTION, (outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION)); // if double pgm_read_dword
                         #endif
                     // }else{ // #20
                     //     #if defined(USE_RNN_LAYERS_ONLY) && defined(REDUCE_RAM_WEIGHTS_LVL2)
@@ -3851,15 +3932,15 @@ public:
                     byte fx = GET_ACTIVATION_FUNCTION_FROM(me->get_type_memmory_value<LayerType>(me->address)); 
                 #endif
 
-                #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
-                    DFLOAT tmp_bias = me->get_type_memmory_value<IDFLOAT>(me->address) MULTIPLY_BY_INT_IF_QUANTIZATION; // NOTE: #28
+                #if defined(SINGLE_BIAS_PER_LAYER)
+                    DFLOAT tmp_bias = me->get_type_memmory_value<IDFLOAT>(me->address); // NOTE: #28
                 #endif
                 for (unsigned int i = 0; i < _numberOfOutputs; i++)
                 {
                     #if defined(NO_BIAS)
                         outputs[i] = 0;
                     #elif defined(MULTIPLE_BIASES_PER_LAYER)                                                                                 // TODO: REDUCE_RAM_BIASES "common reference"
-                        outputs[i] = me->get_type_memmory_value<IDFLOAT>(me->address) MULTIPLY_BY_INT_IF_QUANTIZATION; 
+                        outputs[i] = me->get_type_memmory_value<IDFLOAT>(me->address); 
                     #else
                         outputs[i] = tmp_bias;
                     #endif
@@ -3868,12 +3949,12 @@ public:
                     accumulatedDotProduct(hiddenStates, &outputs[i], _numberOfOutputs); // WithSrc2Address
 
                     #if defined(ACTIVATION__PER_LAYER)
-                        outputs[i] = (IS_THIS(activation_Function_ptrs)[fx])(outputs[i]);
+                        outputs[i] = (IS_THIS(activation_Function_ptrs)[fx])((outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION));
                     #elif defined(Softmax)
-                        outputs[i] = exp(outputs[i]);
+                        outputs[i] = exp((outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION));
                         me->sumOfSoftmax += outputs[i];
                     #else
-                        outputs[i] = ACTIVATE_WITH(ACTIVATION_FUNCTION, outputs[i]);
+                        outputs[i] = ACTIVATE_WITH(ACTIVATION_FUNCTION, (outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION));
                     #endif
                 }
 
@@ -3908,15 +3989,15 @@ public:
             #if defined(ACTIVATION__PER_LAYER) // #27
                 byte fx = GET_ACTIVATION_FUNCTION_FROM(me->get_type_memmory_value<LayerType>(me->address)); // #23
             #endif
-            #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER) // #27
-                DFLOAT tmp_bias = me->get_type_memmory_value<IDFLOAT>(me->address) MULTIPLY_BY_INT_IF_QUANTIZATION; // NOTE: #28
+            #if defined(SINGLE_BIAS_PER_LAYER) // #27
+                DFLOAT tmp_bias = me->get_type_memmory_value<IDFLOAT>(me->address); // NOTE: #28
             #endif
             for (unsigned int i = 0; i < _numberOfOutputs; i++)
             {
                 #if defined(NO_BIAS)
                     outputs[i] = 0;
                 #elif defined(MULTIPLE_BIASES_PER_LAYER)                                                                                 // TODO: REDUCE_RAM_BIASES "common reference"
-                    outputs[i] = me->get_type_memmory_value<IDFLOAT>(me->address) MULTIPLY_BY_INT_IF_QUANTIZATION; 
+                    outputs[i] = me->get_type_memmory_value<IDFLOAT>(me->address); 
                 #else
                     outputs[i] = tmp_bias;
                 #endif
@@ -3928,21 +4009,21 @@ public:
                     #if defined(REDUCED_SKETCH_SIZE_DOT_PROD) // WARN: #26
                         unsigned int j = 0;
                         do {
-                            outputs[i] += inputs[j] * me->get_type_memmory_value<IDFLOAT>(me->address) MULTIPLY_BY_INT_IF_QUANTIZATION;
+                            outputs[i] += inputs[j] * me->get_type_memmory_value<IDFLOAT>(me->address);
                         } while (++j != _numberOfInputs);
                     #else
                         for (unsigned int j = 0; j < _numberOfInputs; j++) // REDUCE_RAM_WEIGHTS_LVL2 is disabled
-                            outputs[i] += inputs[j] * me->get_type_memmory_value<IDFLOAT>(me->address) MULTIPLY_BY_INT_IF_QUANTIZATION;
+                            outputs[i] += inputs[j] * me->get_type_memmory_value<IDFLOAT>(me->address);
                     #endif
                 // #endif
 
                 #if defined(ACTIVATION__PER_LAYER)
-                    outputs[i] = (IS_THIS(activation_Function_ptrs)[fx])(outputs[i]);
+                    outputs[i] = (IS_THIS(activation_Function_ptrs)[fx])((outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION));
                 #elif defined(Softmax)
-                    outputs[i] = exp(outputs[i]);
+                    outputs[i] = exp((outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION));
                     me->sumOfSoftmax += outputs[i];
                 #else
-                    outputs[i] = ACTIVATE_WITH(ACTIVATION_FUNCTION, outputs[i]);
+                    outputs[i] = ACTIVATE_WITH(ACTIVATION_FUNCTION, (outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION));
                 #endif
             }
 
@@ -3971,16 +4052,15 @@ public:
                     #if defined(NO_BIAS)
                         _outputs[i] = 0;
                     #elif defined(MULTIPLE_BIASES_PER_LAYER)                                                                                 // TODO: REDUCE_RAM_BIASES "common reference"
-                        _outputs[i] = me->get_type_memmory_value<IDFLOAT>(me->address) MULTIPLY_BY_INT_IF_QUANTIZATION;
+                        _outputs[i] = me->get_type_memmory_value<IDFLOAT>(me->address);
                     #else 
-                        // MULTIPLY_BY_INT_IF_QUANTIZATION is done, don't worry
                         _outputs[i] = tmp_single_bias; // #14 #15 using bias instead of b since it's single per layer // 2025-05-01 04:46:32 PM  TODO: Tensorflow custom training class-implementation
                     #endif
 
                     ACCUMULATED_DOT_PRODUCT_OF(inputs , &_outputs[i], _numberOfInputs);
                     ACCUMULATED_DOT_PRODUCT_OF(inputs2, &_outputs[i], _numberOfOutputs); 
 
-                    _outputs[i] = activate(_outputs[i]);
+                    _outputs[i] = activate((_outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION));
                 }
             }
         #endif
@@ -4000,8 +4080,8 @@ public:
                 #if defined(ACTIVATION__PER_LAYER) // TODO: ##27 move this logic to NeuralNetwork::FeedForward since it's kinda shared across architectures
                     byte fx = GET_ACTIVATION_FUNCTION_FROM(me->get_type_memmory_value<LayerType>(me->address)); // #23
                 #endif
-                #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER) // #27 via *bias ? but... bias is IDFLOAT and not DFLOAT unfortunately so I might change it just for it?
-                    DFLOAT tmp_bias = me->get_type_memmory_value<IDFLOAT>(me->address) MULTIPLY_BY_INT_IF_QUANTIZATION;  // NOTE: ##28 DFLOAT not IDFLOAT
+                #if defined(SINGLE_BIAS_PER_LAYER) // #27 via *bias ? but... bias is IDFLOAT and not DFLOAT unfortunately so I might change it just for it?
+                    DFLOAT tmp_bias = me->get_type_memmory_value<IDFLOAT>(me->address);  // NOTE: ##28 DFLOAT not IDFLOAT
                 #endif
 
                 // Since they are MCUs we care a bit more about sketch size vs speed (not that it can be way faster but anyways)
@@ -4041,13 +4121,13 @@ public:
                 #if defined(ACTIVATION__PER_LAYER) // TODO: ##27 move this logic to NeuralNetwork::FeedForward since it's kinda shared across architectures
                     byte fx = GET_ACTIVATION_FUNCTION_FROM(me->get_type_memmory_value<LayerType>(me->address)); // #23
                 #endif
-                #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER) // #27 via *bias ? but... bias is IDFLOAT and not DFLOAT unfortunately so I might change it just for it?
-                    DFLOAT tmp_bias = me->get_type_memmory_value<IDFLOAT>(me->address) MULTIPLY_BY_INT_IF_QUANTIZATION;  // NOTE: ##28 DFLOAT not IDFLOAT
+                #if defined(SINGLE_BIAS_PER_LAYER) // #27 via *bias ? but... bias is IDFLOAT and not DFLOAT unfortunately so I might change it just for it?
+                    DFLOAT tmp_bias = me->get_type_memmory_value<IDFLOAT>(me->address);  // NOTE: ##28 DFLOAT not IDFLOAT
                 #endif
 
                 gateActivationOf(inputs,hiddenStates OPTIONAL_SINGLE_BIAS(tmp_bias), LSTM_ACTIVATION_FUNCTION, gatedOutputs); // f_t (Forget-Gate at time t) #14
 
-                for (unsigned int i=0; i < _numberOfOutputs; i++) // c_t = f_t * c_t-1 ... | Could be SIMD?
+                for (unsigned int i=0; i < _numberOfOutputs; i++) // c_t = f_t * c_t-1 ... | Could be DSP?
                     cellStates[i] *= gatedOutputs[i];
 
                 gateActivationOf(inputs,hiddenStates OPTIONAL_SINGLE_BIAS(tmp_bias), LSTM_ACTIVATION_FUNCTION, gatedOutputs); // u_t (Update-Gate at time t) #14
@@ -4086,11 +4166,11 @@ public:
 
             #if defined(REDUCED_SKETCH_SIZE_DOT_PROD) // WARN: #26
                 do {
-                    *dest += (*src1++) * TYPE_MEMMORY_READ_IDFLOAT(*src2++) MULTIPLY_BY_INT_IF_QUANTIZATION;
+                    *dest += (*src1++) * TYPE_MEMMORY_READ_IDFLOAT(*src2++);
                 } while (--len);
             #else
                 for (unsigned int i = 0; i < len; i++)
-                    *dest += src1[i] * TYPE_MEMMORY_READ_IDFLOAT(src2[i]) MULTIPLY_BY_INT_IF_QUANTIZATION;
+                    *dest += src1[i] * TYPE_MEMMORY_READ_IDFLOAT(src2[i]);
             #endif
         }
 
@@ -4108,9 +4188,9 @@ public:
                 #if defined(NO_BIAS)
                     outputs[i] = 0;
                 #elif defined(MULTIPLE_BIASES_PER_LAYER)                                                                                 // TODO: REDUCE_RAM_BIASES "common reference"
-                    outputs[i] = TYPE_MEMMORY_READ_IDFLOAT(bias[i]) MULTIPLY_BY_INT_IF_QUANTIZATION;
+                    outputs[i] = TYPE_MEMMORY_READ_IDFLOAT(bias[i]);
                 #else
-                    outputs[i] = TYPE_MEMMORY_READ_IDFLOAT(*bias) MULTIPLY_BY_INT_IF_QUANTIZATION; // TODO: Do the MULTIPLY_BY_INT_IF_QUANTIZATION-computation once, outside the loop, in a temp-variable when single-bias per layer.... Maybe? also in feedforward etc.
+                    outputs[i] = TYPE_MEMMORY_READ_IDFLOAT(*bias);
                 #endif
 
                 // https://github.com/GiorgosXou/NeuralNetworks/discussions/16#discussioncomment-7479256
@@ -4129,12 +4209,12 @@ public:
                 // #endif
 
                 #if defined(ACTIVATION__PER_LAYER)
-                    outputs[i] = (IS_THIS(activation_Function_ptrs)[GET_ACTIVATION_FUNCTION_FROM(me->PropsPerLayer[me->AtlayerIndex])])(outputs[i]);
+                    outputs[i] = (IS_THIS(activation_Function_ptrs)[GET_ACTIVATION_FUNCTION_FROM(me->PropsPerLayer[me->AtlayerIndex])])((outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION));
                 #elif defined(Softmax)
-                    outputs[i] = exp(outputs[i]);
+                    outputs[i] = exp((outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION));
                     me->sumOfSoftmax += outputs[i];
                 #else
-                    outputs[i] = ACTIVATE_WITH(ACTIVATION_FUNCTION, outputs[i]); //  (neuron[i]'s output) = Sigmoid_Activation_Function_Value_Of((neuron[i]'s output))
+                    outputs[i] = ACTIVATE_WITH(ACTIVATION_FUNCTION, (outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION)); //  (neuron[i]'s output) = Sigmoid_Activation_Function_Value_Of((neuron[i]'s output))
                 #endif
             }
 
@@ -4170,9 +4250,9 @@ public:
                     #if defined(NO_BIAS)
                         outputs[i] = 0;
                     #elif defined(MULTIPLE_BIASES_PER_LAYER)                                                                                 // TODO: REDUCE_RAM_BIASES "common reference"
-                        outputs[i] = TYPE_MEMMORY_READ_IDFLOAT(bias[i]) MULTIPLY_BY_INT_IF_QUANTIZATION;
+                        outputs[i] = TYPE_MEMMORY_READ_IDFLOAT(bias[i]);
                     #else
-                        outputs[i] = TYPE_MEMMORY_READ_IDFLOAT(*bias) MULTIPLY_BY_INT_IF_QUANTIZATION; // TODO: Do the MULTIPLY_BY_INT_IF_QUANTIZATION-computation once, outside the loop, in a temp-variable when single-bias per layer.... Maybe? also in feedforward etc.
+                        outputs[i] = TYPE_MEMMORY_READ_IDFLOAT(*bias);
                     #endif
 
                     #if defined(REDUCE_RAM_WEIGHTS_LVL2)
@@ -4184,12 +4264,12 @@ public:
                     #endif
 
                     #if defined(ACTIVATION__PER_LAYER)
-                        outputs[i] = (IS_THIS(activation_Function_ptrs)[GET_ACTIVATION_FUNCTION_FROM(me->PropsPerLayer[me->AtlayerIndex])])(outputs[i]);
+                        outputs[i] = (IS_THIS(activation_Function_ptrs)[GET_ACTIVATION_FUNCTION_FROM(me->PropsPerLayer[me->AtlayerIndex])])((outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION));
                     #elif defined(Softmax)
-                        outputs[i] = exp(outputs[i]);
+                        outputs[i] = exp((outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION));
                         me->sumOfSoftmax += outputs[i];
                     #else
-                        outputs[i] = ACTIVATE_WITH(ACTIVATION_FUNCTION, outputs[i]); //  (neuron[i]'s output) = Sigmoid_Activation_Function_Value_Of((neuron[i]'s output))
+                        outputs[i] = ACTIVATE_WITH(ACTIVATION_FUNCTION, (outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION)); //  (neuron[i]'s output) = Sigmoid_Activation_Function_Value_Of((neuron[i]'s output))
                     #endif
                 }
 
@@ -4227,9 +4307,9 @@ public:
                     #if defined(NO_BIAS)
                         _outputs[i] = 0;
                     #elif defined(MULTIPLE_BIASES_PER_LAYER)                                                                                 // TODO: REDUCE_RAM_BIASES "common reference"
-                        _outputs[i] = TYPE_MEMMORY_READ_IDFLOAT(b[i]) MULTIPLY_BY_INT_IF_QUANTIZATION;
+                        _outputs[i] = TYPE_MEMMORY_READ_IDFLOAT(b[i]);
                     #else
-                        _outputs[i] = TYPE_MEMMORY_READ_IDFLOAT(*bias) MULTIPLY_BY_INT_IF_QUANTIZATION; // #14 #15 using bias instead of b since it's single per layer // 2025-05-01 04:46:32 PM  TODO: Tensorflow custom training class-implementation
+                        _outputs[i] = TYPE_MEMMORY_READ_IDFLOAT(*bias); // #14 #15 using bias instead of b since it's single per layer // 2025-05-01 04:46:32 PM  TODO: Tensorflow custom training class-implementation
                     #endif
 
                     #if defined(REDUCE_RAM_WEIGHTS_LVL2)
@@ -4240,7 +4320,7 @@ public:
                         ACCUMULATED_DOT_PRODUCT_OF(inputs2, &weights[i][offset + _numberOfInputs], &_outputs[i], _numberOfOutputs);
                     #endif
 
-                    _outputs[i] = activate(_outputs[i]);
+                    _outputs[i] = activate((_outputs[i] MULTIPLY_BY_INT_IF_QUANTIZATION));
                 }
             }
         #endif
@@ -4296,7 +4376,7 @@ public:
 
                 gateActivationOf(inputs,hiddenStates OPTIONAL_MULTI_BIAS(bias), LSTM_ACTIVATION_FUNCTION, gatedOutputs); // f_t (Forget-Gate at time t) #14
 
-                for (unsigned int i=0; i < _numberOfOutputs; i++) // c_t = f_t * c_t-1 ... | Could be SIMD?
+                for (unsigned int i=0; i < _numberOfOutputs; i++) // c_t = f_t * c_t-1 ... | Could be DSP?
                     cellStates[i] *= gatedOutputs[i];
 
                 gateActivationOf(inputs,hiddenStates OPTIONAL_MULTI_BIAS(&bias[_numberOfOutputs]), LSTM_ACTIVATION_FUNCTION, gatedOutputs, (_numberOfInputs+_numberOfOutputs)); // u_t (Update-Gate at time t) #14
@@ -4433,7 +4513,7 @@ public:
             preLgamma = new DFLOAT[_numberOfInputs]{}; // create gamma of previous layer and initialize{} values to 0 .. meh  // #10
             
 
-            #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+            #if defined(SINGLE_BIAS_PER_LAYER)
                 DFLOAT bias_Delta = 1.0;
             #endif
             DFLOAT gamma;
@@ -4466,7 +4546,7 @@ public:
 
                     CommonCompute(gamma, gamma, inputs, i, _numberOfInputs);
 
-                    #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+                    #if defined(SINGLE_BIAS_PER_LAYER)
                         bias_Delta *= gamma;
                     #endif
                 } while (i != 0);
@@ -4493,13 +4573,13 @@ public:
                     
                     CommonCompute(gamma, gamma, inputs, i);
 
-                    #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+                    #if defined(SINGLE_BIAS_PER_LAYER)
                         bias_Delta *= gamma;
                     #endif
                 }
             #endif
             
-            #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+            #if defined(SINGLE_BIAS_PER_LAYER)
                 *bias -= bias_Delta * me->LearningRateOfBiases;
             #endif
         }
@@ -4511,7 +4591,7 @@ public:
             #endif
             preLgamma = new DFLOAT[_numberOfInputs]{}; // #10
 
-            #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+            #if defined(SINGLE_BIAS_PER_LAYER)
                 DFLOAT bias_Delta = 1.0;
             #endif
             DFLOAT gamma;
@@ -4523,7 +4603,7 @@ public:
                     i--;
                     CommonCompute(gamma, frontLayer->preLgamma[i], inputs, i, _numberOfInputs);
 
-                    #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+                    #if defined(SINGLE_BIAS_PER_LAYER)
                         bias_Delta *= gamma;
                     #endif
                 } while (i != 0);
@@ -4533,13 +4613,13 @@ public:
                 {
                     CommonCompute(gamma, frontLayer->preLgamma[i], inputs, i);
 
-                    #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+                    #if defined(SINGLE_BIAS_PER_LAYER)
                         bias_Delta *= gamma;
                     #endif
                 }
             #endif
 
-            #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+            #if defined(SINGLE_BIAS_PER_LAYER)
                 *bias -= bias_Delta * me->LearningRateOfBiases;
             #endif
 
@@ -4570,7 +4650,7 @@ public:
                         NN_PRINT_1(F_MACRO("| F(x):"));
                         NN_PRINT_1(me->get_type_memmory_value<byte>(me->address));
                     #endif
-                    #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+                    #if defined(SINGLE_BIAS_PER_LAYER)
                         NN_PRINT_1(F_MACRO("| bias:"));
                         NN_PRINT_2(me->get_type_memmory_value<IDFLOAT>(me->address) MULTIPLY_BY_INT_IF_QUANTIZATION, DFLOAT_LEN);
                     #endif
@@ -4653,7 +4733,7 @@ public:
                         NN_PRINT_1(me->threshold);
                     }
                 #endif
-                #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+                #if defined(SINGLE_BIAS_PER_LAYER)
                     NN_PRINT_1(F_MACRO("| bias:"));
                     NN_PRINT_2(me->get_type_memmory_value<IDFLOAT>(me->address) MULTIPLY_BY_INT_IF_QUANTIZATION, DFLOAT_LEN);
                 #endif
@@ -4754,7 +4834,7 @@ public:
                             NN_PRINT_1(me->threshold);
                         }
                     #endif
-                    #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+                    #if defined(SINGLE_BIAS_PER_LAYER)
                         NN_PRINT_1(F_MACRO("| bias:"));
                         NN_PRINT_2(me->get_type_memmory_value<IDFLOAT>(me->address) MULTIPLY_BY_INT_IF_QUANTIZATION, DFLOAT_LEN);
                     #endif
@@ -4793,7 +4873,7 @@ public:
                             NN_PRINT_1(me->threshold);
                         }
                     #endif
-                    #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+                    #if defined(SINGLE_BIAS_PER_LAYER)
                         NN_PRINT_1(F_MACRO("| bias:"));
                         NN_PRINT_2(me->get_type_memmory_value<IDFLOAT>(me->address) MULTIPLY_BY_INT_IF_QUANTIZATION, DFLOAT_LEN);
                     #endif
@@ -4865,7 +4945,7 @@ public:
                     NN_PRINT_1(F_MACRO("*"));
                     NN_PRINT_1(_numberOfOutputs);
                     NN_PRINT_1(F_MACRO("))*3] "));
-                    #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+                    #if defined(SINGLE_BIAS_PER_LAYER)
                         NN_PRINT_1(F_MACRO("| bias:"));
                         NN_PRINT_2(TYPE_MEMMORY_READ_IDFLOAT(*bias) MULTIPLY_BY_INT_IF_QUANTIZATION, DFLOAT_LEN);
                     #endif
@@ -4903,7 +4983,7 @@ public:
                     NN_PRINT_1(F_MACRO("*"));
                     NN_PRINT_1(_numberOfOutputs);
                     NN_PRINT_1(F_MACRO("))*4] "));
-                    #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+                    #if defined(SINGLE_BIAS_PER_LAYER)
                         NN_PRINT_1(F_MACRO("| bias:"));
                         NN_PRINT_2(TYPE_MEMMORY_READ_IDFLOAT(*bias) MULTIPLY_BY_INT_IF_QUANTIZATION, DFLOAT_LEN);
                     #endif
@@ -4940,7 +5020,7 @@ public:
                     NN_PRINT_1(F_MACRO(")*"));
                     NN_PRINT_1(_numberOfOutputs);
                     NN_PRINT_1(F_MACRO("]"));
-                    #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+                    #if defined(SINGLE_BIAS_PER_LAYER)
                         NN_PRINT_1(F_MACRO("| bias:"));
                         NN_PRINT_2(TYPE_MEMMORY_READ_IDFLOAT(*bias) MULTIPLY_BY_INT_IF_QUANTIZATION, DFLOAT_LEN);
                     #endif
@@ -5029,7 +5109,7 @@ public:
                 #if defined(MULTIPLE_NN_TYPE_ARCHITECTURES)
                     NN_PRINT_1(F_MACRO("]"));
                 #endif
-                #if !defined(NO_BIAS) and !defined(MULTIPLE_BIASES_PER_LAYER)
+                #if defined(SINGLE_BIAS_PER_LAYER)
                     NN_PRINT_1(F_MACRO("| bias:"));
                     NN_PRINT_2(TYPE_MEMMORY_READ_IDFLOAT(*bias) MULTIPLY_BY_INT_IF_QUANTIZATION, DFLOAT_LEN);
                 #endif
@@ -5121,6 +5201,7 @@ In Arduino log() = ln = natural logarithm = logarithm with base e
  - USE_GRU__NB
  - DISABLE_STATIC_FOR_ACTS
  TODO: FEATURES:
+ - A NN constractor for EEPROM & FRAM that inits weights (in the form of `save()`)
  - Statistically based training methond idea (instead of gradient based)
  - Maybe a completly int based NN that doesn't use floats?
  - Replace `unsigned int`s with other types via optimization or macro eg. to byte
